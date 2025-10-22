@@ -2,6 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Version](https://img.shields.io/badge/version-1.5.0-blue)](https://github.com/dakdemir-nmdp/CovCombR)
+[![R](https://img.shields.io/badge/R-%3E%3D3.5.0-blue)](https://www.r-project.org/)
 
 ## Overview
 
