@@ -1,0 +1,11 @@
+/doc/
+/Meta/
+.DS_Store
+.Rhistory
+.Rproj.user
+*.Rproj
+*.tar.gz
+*.Rcheck/
+docs/
+# Exclude PDF vignettes (can be rebuilt)
+vignettes/*.pdf

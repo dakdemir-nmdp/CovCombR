@@ -1,0 +1,955 @@
+---
+title: "Statistical Methods for CovCombR"
+subtitle: "EM Algorithm for Combining Incomplete Covariance Matrices"
+author: "Deniz Akdemir"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: false
+    fig_caption: true
+    keep_tex: false
+bibliography: references.bib
+header-includes:
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+vignette: >
+  %\VignetteIndexEntry{Statistical Methods for CovCombR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+# Problem Statement
+
+## Motivation
+
+In many scientific applications, we collect covariance or correlation data across multiple studies, experiments, or platforms. Each study may measure a different (but overlapping) subset of variables, creating an **incomplete data pattern**. Direct pooling or naive stitching of these matrices often produces:
+
+1. **Non-positive definite** results (mathematical inconsistency)
+2. **Biased estimates** when ignoring statistical dependencies
+3. **Loss of information** from discarding incomplete observations
+
+The CovCombR package solves this problem using a principled statistical framework based on the Wishart distribution and the Expectation-Maximization (EM) algorithm.
+
+## Mathematical Setup
+
+### Data Generation Model
+
+We observe $K$ independent Wishart-distributed random matrices:
+
+$$\mathbf{W}_k \sim \text{Wishart}(\nu_k, \alpha_k \gamma \boldsymbol{\Sigma}), \quad k = 1, \ldots, K$$
+
+where:
+
+- $\mathbf{W}_k \in \mathbb{R}^{p \times p}$ is the complete (unobserved) Wishart matrix for study $k$
+- $\nu_k > p-1$ is the degrees of freedom (sample size minus 1)
+- $\boldsymbol{\Sigma} \in \mathbb{R}^{p \times p}$ is the **common per-degree-of-freedom scale matrix** (our target parameter)
+- $\alpha_k > 0$ is a study-specific scale factor (optional, default = 1)
+- $\gamma > 0$ is a global scale parameter matching data scale
+- $p$ is the total number of variables across all studies
+
+### Incomplete Observations
+
+We do **not** observe the complete $\mathbf{W}_k$. Instead, we observe only a principal submatrix:
+
+$$\mathbf{S}_k = \mathbf{W}_k[\mathcal{O}_k, \mathcal{O}_k] \in \mathbb{R}^{p_k \times p_k}$$
+
+where:
+
+- $\mathcal{O}_k \subset \{1, 2, \ldots, p\}$ is the set of observed variable indices in study $k$
+- $p_k = |\mathcal{O}_k|$ is the number of observed variables in study $k$
+- $\mathcal{M}_k = \{1, \ldots, p\} \setminus \mathcal{O}_k$ is the set of missing variable indices
+
+The observed data likelihood is:
+
+$$\mathbf{S}_k \sim \text{Wishart}\left(\nu_k, (\alpha_k \gamma \boldsymbol{\Sigma})[\mathcal{O}_k, \mathcal{O}_k]\right)$$
+
+where $\boldsymbol{\Sigma}[\mathcal{O}_k, \mathcal{O}_k]$ denotes the $p_k \times p_k$ principal submatrix of $\boldsymbol{\Sigma}$ corresponding to observed variables.
+
+### Key Assumptions
+
+1. **Common Covariance Structure:** All studies share the same underlying per-df scale $\boldsymbol{\Sigma}$
+2. **Independence:** Wishart samples $\mathbf{S}_1, \ldots, \mathbf{S}_K$ are mutually independent
+3. **Missing at Random (MAR):** Missingness pattern $\mathcal{O}_k$ is non-informative about parameter values
+4. **Positive Definiteness:** True $\boldsymbol{\Sigma} \succ 0$ (positive definite)
+5. **Sufficient Overlap:** Enough variable pairs are jointly observed for identifiability
+
+### Goal
+
+Estimate the complete $p \times p$ covariance matrix $\boldsymbol{\Sigma}$ by maximizing the observed-data log-likelihood:
+
+$$\mathcal{L}(\boldsymbol{\Sigma}, \{\alpha_k\}, \gamma \mid \{\mathbf{S}_k\}) = \sum_{k=1}^K \log p(\mathbf{S}_k \mid \boldsymbol{\Sigma}, \alpha_k, \gamma, \nu_k)$$
+
+Since this likelihood involves incomplete data, we employ the **EM algorithm** to iteratively estimate $\boldsymbol{\Sigma}$, $\{\alpha_k\}$, and $\gamma$.
+
+# The EM Algorithm
+
+## Overview of the EM Framework
+
+The Expectation-Maximization (EM) algorithm is an iterative method for maximum likelihood estimation when data are incomplete. The algorithm alternates between:
+
+1. **E-step (Expectation):** Compute the expected value of the complete-data log-likelihood given observed data and current parameter estimates
+2. **M-step (Maximization):** Update parameters by maximizing the expected complete-data log-likelihood
+
+The EM algorithm guarantees **monotonic increase** in the observed-data log-likelihood at each iteration, ensuring convergence to at least a local maximum.
+
+## Complete-Data Likelihood
+
+If we had observed the complete Wishart matrices $\mathbf{W}_1, \ldots, \mathbf{W}_K$, the log-likelihood would be:
+
+$$\ell_{\text{complete}}(\boldsymbol{\Sigma}, \{\alpha_k\}, \gamma) = \sum_{k=1}^K \log p(\mathbf{W}_k \mid \boldsymbol{\Sigma}, \alpha_k, \gamma, \nu_k)$$
+
+where the Wishart density is:
+
+$$p(\mathbf{W}_k \mid \boldsymbol{\Sigma}, \alpha_k, \gamma, \nu_k) \propto |\mathbf{W}_k|^{(\nu_k - p - 1)/2} \exp\left(-\frac{1}{2\alpha_k\gamma} \text{tr}(\boldsymbol{\Sigma}^{-1} \mathbf{W}_k)\right)$$
+
+The complete-data sufficient statistics are:
+
+$$T(\mathbf{W}_1, \ldots, \mathbf{W}_K) = \left\{\sum_{k=1}^K \mathbf{W}_k, \nu_1, \ldots, \nu_K\right\}$$
+
+## E-Step: Conditional Expectations
+
+### Theoretical Foundation
+
+The E-step exploits the **partitioned Wishart distribution** theory. When $\mathbf{W} \sim \text{Wishart}(\nu, \boldsymbol{\Sigma})$ and we partition:
+
+$$\mathbf{W} = \begin{pmatrix} \mathbf{W}_{OO} & \mathbf{W}_{OM} \\ \mathbf{W}_{MO} & \mathbf{W}_{MM} \end{pmatrix}, \quad \boldsymbol{\Sigma} = \begin{pmatrix} \boldsymbol{\Sigma}_{OO} & \boldsymbol{\Sigma}_{OM} \\ \boldsymbol{\Sigma}_{MO} & \boldsymbol{\Sigma}_{MM} \end{pmatrix}$$
+
+then the **conditional distribution** of the missing blocks given the observed block is:
+
+$$\mathbf{W}_{MO} \mid \mathbf{W}_{OO} \sim \text{Matrix Normal}(\mathbf{B} \mathbf{W}_{OO}, \boldsymbol{\Delta}, \mathbf{W}_{OO})$$
+
+$$\mathbf{W}_{MM} \mid \mathbf{W}_{OO} \sim \text{Wishart}(\nu - p_O, \boldsymbol{\Delta}) + \mathbf{B} \mathbf{W}_{OO} \mathbf{B}^T$$
+
+where:
+
+- $\mathbf{B} = \boldsymbol{\Sigma}_{MO} \boldsymbol{\Sigma}_{OO}^{-1}$ are the **regression coefficients** (multivariate linear predictor)
+- $\boldsymbol{\Delta} = \boldsymbol{\Sigma}_{MM} - \mathbf{B} \boldsymbol{\Sigma}_{OM}$ is the **Schur complement** (residual covariance after conditioning)
+
+### E-Step Computation
+
+Given current parameter estimates $\boldsymbol{\Sigma}^{(t)}$, $\{\alpha_k^{(t)}\}$, and $\gamma^{(t)}$, we compute the **expected complete-data sufficient statistic**:
+
+$$Q(\boldsymbol{\Sigma}, \{\alpha_k\}, \gamma \mid \boldsymbol{\Sigma}^{(t)}, \{\alpha_k^{(t)}\}, \gamma^{(t)}) = \mathbb{E}_{\mathbf{W}_k|\mathbf{S}_k, \boldsymbol{\Sigma}^{(t)}}[\ell_{\text{complete}}(\boldsymbol{\Sigma}, \{\alpha_k\}, \gamma)]$$
+
+For each study $k$, we compute the expected complete Wishart matrix $\tilde{\mathbf{W}}_k^{(t)} = \mathbb{E}[\mathbf{W}_k \mid \mathbf{S}_k, \boldsymbol{\Sigma}^{(t)}, \alpha_k^{(t)}, \gamma^{(t)}]$.
+
+### Block-wise Conditional Expectations
+
+For study $k$ with observed set $\mathcal{O}_k$ and missing set $\mathcal{M}_k$:
+
+**Observed block (deterministic):**
+$$\mathbb{E}[\mathbf{W}_k[\mathcal{O}_k, \mathcal{O}_k] \mid \mathbf{S}_k] = \mathbf{S}_k$$
+
+**Off-diagonal blocks (linear prediction):**
+$$\mathbb{E}[\mathbf{W}_k[\mathcal{M}_k, \mathcal{O}_k] \mid \mathbf{S}_k] = \mathbf{B}_k^{(t)} \mathbf{S}_k$$
+
+$$\mathbb{E}[\mathbf{W}_k[\mathcal{O}_k, \mathcal{M}_k] \mid \mathbf{S}_k] = \mathbf{S}_k (\mathbf{B}_k^{(t)})^T$$
+
+**Unobserved block (Wishart conditional + quadratic form):**
+$$\mathbb{E}[\mathbf{W}_k[\mathcal{M}_k, \mathcal{M}_k] \mid \mathbf{S}_k] = \nu_k \alpha_k^{(t)} \gamma^{(t)} \boldsymbol{\Delta}_k^{(t)} + \mathbf{B}_k^{(t)} \mathbf{S}_k (\mathbf{B}_k^{(t)})^T$$
+
+where:
+
+- $\mathbf{B}_k^{(t)} = \boldsymbol{\Sigma}^{(t)}[\mathcal{M}_k, \mathcal{O}_k] \cdot (\boldsymbol{\Sigma}^{(t)}[\mathcal{O}_k, \mathcal{O}_k])^{-1}$
+- $\boldsymbol{\Delta}_k^{(t)} = \boldsymbol{\Sigma}^{(t)}[\mathcal{M}_k, \mathcal{M}_k] - \mathbf{B}_k^{(t)} \boldsymbol{\Sigma}^{(t)}[\mathcal{O}_k, \mathcal{M}_k]$
+
+### Implementation Notes
+
+1. **Matrix Inversion:** $(\boldsymbol{\Sigma}_{OO})^{-1}$ is computed via Cholesky decomposition for numerical stability
+2. **Ridge Regularization:** Adds $\lambda \mathbf{I}$ (default $\lambda = 10^{-8}$) before inversion to handle near-singularity
+3. **Symmetry Enforcement:** The filled-in $\tilde{\mathbf{W}}_k$ is symmetrized: $\frac{1}{2}(\tilde{\mathbf{W}}_k + \tilde{\mathbf{W}}_k^T)$
+4. **Sparse Patterns:** If $|\mathcal{M}_k| = 0$ (no missing variables), the E-step simply returns $\mathbf{S}_k$
+
+The result is a collection of "pseudo-complete" data matrices $\{\tilde{\mathbf{W}}_1^{(t)}, \ldots, \tilde{\mathbf{W}}_K^{(t)}\}$, each of size $p \times p$.
+
+## M-Step: Parameter Updates
+
+The M-step maximizes the Q-function (expected complete-data log-likelihood) with respect to parameters $\boldsymbol{\Sigma}$, $\{\alpha_k\}$, and $\gamma$.
+
+### Covariance Update
+
+The maximum likelihood estimator for $\boldsymbol{\Sigma}$ given pseudo-complete data is:
+
+$$\boldsymbol{\Sigma}^{(t+1)} = \frac{1}{\sum_{k=1}^K \nu_k} \sum_{k=1}^K \frac{1}{\alpha_k^{(t)}} \tilde{\mathbf{W}}_k^{(t)}$$
+
+**Interpretation:** This is a **weighted average** of the pseudo-complete Wishart matrices, where:
+
+- Each $\tilde{\mathbf{W}}_k$ contributes proportionally to its degrees of freedom $\nu_k$
+- The scale factor $\alpha_k^{-1}$ adjusts for heterogeneous scaling across studies
+- The denominator $\sum \nu_k$ normalizes to produce the per-degree-of-freedom scale
+
+**Derivation:** Taking the derivative of $Q(\boldsymbol{\Sigma} \mid \cdot)$ with respect to $\boldsymbol{\Sigma}$ and setting to zero yields the above solution.
+
+### Scale Factor Update (when `scale_method = "estimate"`)
+
+When estimating study-specific scale factors, we solve:
+
+$$\alpha_k^{(t+1)} = \frac{1}{\nu_k p} \text{tr}\left((\boldsymbol{\Sigma}^{(t+1)})^{-1} \tilde{\mathbf{W}}_k^{(t)}\right)$$
+
+**Implementation:** The algorithm uses a **coordinate ascent** approach:
+
+1. Fix $\{\alpha_k\}$, update $\boldsymbol{\Sigma}$
+2. Fix $\boldsymbol{\Sigma}$, update each $\alpha_k$
+3. Iterate until convergence (inner loop, max 25 iterations, tolerance $10^{-6}$)
+
+This nested optimization ensures monotonic likelihood increase while handling the coupling between $\boldsymbol{\Sigma}$ and $\{\alpha_k\}$.
+
+**Constraints:** $\alpha_k$ is constrained to $\alpha_k \geq 10^{-8}$ to prevent numerical instability.
+
+### Global Scale Parameter Update
+
+After updating $\boldsymbol{\Sigma}$ and $\{\alpha_k\}$, we estimate the global scale parameter $\gamma$ via maximum likelihood using the **observed data** $\{\mathbf{S}_k\}$ (not the pseudo-complete data):
+
+$$\gamma^{(t+1)} = \frac{\sum_{k=1}^K \frac{1}{\alpha_k^{(t+1)}} \text{tr}\left((\boldsymbol{\Sigma}^{(t+1)}[\mathcal{O}_k, \mathcal{O}_k])^{-1} \mathbf{S}_k\right)}{\sum_{k=1}^K \nu_k p_k}$$
+
+where $p_k = |\mathcal{O}_k|$ is the number of observed variables in study $k$.
+
+**Purpose:** The parameter $\gamma$ rescales $\boldsymbol{\Sigma}$ to match the **data scale**. Specifically:
+
+- $\boldsymbol{\Sigma}$ is estimated on a "per-degree-of-freedom" scale (parameter scale)
+- The combined output $\hat{\mathbf{S}} = \gamma \hat{\boldsymbol{\Sigma}}$ is on the data scale (useful for prediction)
+
+**Rationale:** When `scale_method = "none"`, the EM algorithm estimates $\boldsymbol{\Sigma}$ without pre-normalization. The MLE for $\gamma$ ensures that the scaled estimate matches the average observed variance level across studies.
+
+### Scale Method Options
+
+The `scale_method` parameter controls how heterogeneous scaling is handled:
+
+1. **`"none"` (default):** No pre-standardization. Only global $\gamma$ is estimated. Use when studies have similar variance scales.
+
+
+3. **`"estimate":`** Jointly estimate study-specific scale factors $\{\alpha_k\}$ and $\boldsymbol{\Sigma}$ via nested coordinate ascent. Use when scale heterogeneity is of scientific interest or when studies differ substantially in measurement units.
+
+### Positive Definiteness Projection
+
+After each M-step, $\boldsymbol{\Sigma}^{(t+1)}$ is projected to the positive definite cone:
+
+$$\boldsymbol{\Sigma}_{\text{PD}} = \mathbf{V} \max(\boldsymbol{\Lambda}, \lambda_{\min} \mathbf{I}) \mathbf{V}^T$$
+
+where $\boldsymbol{\Sigma}^{(t+1)} = \mathbf{V} \boldsymbol{\Lambda} \mathbf{V}^T$ is the eigendecomposition and $\lambda_{\min} = 10^{-10}$ (default) is the minimum eigenvalue threshold.
+
+**Purpose:** Numerical errors can occasionally produce negative or zero eigenvalues. This projection guarantees $\boldsymbol{\Sigma} \succ 0$ while minimally perturbing the matrix.
+
+## Convergence
+
+### Theoretical Guarantee
+
+The EM algorithm guarantees **monotonic increase** of the observed-data log-likelihood:
+
+$$\mathcal{L}(\boldsymbol{\Sigma}^{(t+1)}, \{\alpha_k^{(t+1)}\}, \gamma^{(t+1)} \mid \{\mathbf{S}_k\}) \geq \mathcal{L}(\boldsymbol{\Sigma}^{(t)}, \{\alpha_k^{(t)}\}, \gamma^{(t)} \mid \{\mathbf{S}_k\})$$
+
+with equality only at convergence. This follows from the **EM ascent property**:
+
+$$\mathcal{L}(\boldsymbol{\theta}^{(t+1)}) - \mathcal{L}(\boldsymbol{\theta}^{(t)}) \geq Q(\boldsymbol{\theta}^{(t+1)} \mid \boldsymbol{\theta}^{(t)}) - Q(\boldsymbol{\theta}^{(t)} \mid \boldsymbol{\theta}^{(t)}) \geq 0$$
+
+Because the likelihood is bounded above (by the data) and increases at each iteration, the algorithm **converges to at least a local maximum**.
+
+### Convergence Criterion
+
+The algorithm monitors **relative changes** in both $\boldsymbol{\Sigma}$ and $\gamma$:
+
+$$\Delta_{\boldsymbol{\Sigma}}^{(t)} = \frac{\|\boldsymbol{\Sigma}^{(t+1)} - \boldsymbol{\Sigma}^{(t)}\|_F}{\|\boldsymbol{\Sigma}^{(t)}\|_F}$$
+
+$$\Delta_{\gamma}^{(t)} = \frac{|\gamma^{(t+1)} - \gamma^{(t)}|}{|\gamma^{(t)}|}$$
+
+The algorithm **stops** when:
+
+$$\max(\Delta_{\boldsymbol{\Sigma}}^{(t)}, \Delta_{\gamma}^{(t)}) < \epsilon$$
+
+where $\epsilon = 10^{-7}$ (default tolerance).
+
+**Alternative Criterion:** The user can also monitor the relative change in log-likelihood:
+
+$$\Delta_{\mathcal{L}}^{(t)} = \frac{\mathcal{L}(\boldsymbol{\theta}^{(t+1)}) - \mathcal{L}(\boldsymbol{\theta}^{(t)})}{\max(|\mathcal{L}(\boldsymbol{\theta}^{(t)})|, 1)}$$
+
+### Practical Considerations
+
+1. **Typical Convergence:** 10-50 iterations for most datasets
+2. **Maximum Iterations:** 500 (default), adjustable via `control$max_iter`
+3. **Numerical Stability:** Ridge regularization prevents divergence from near-singular matrices
+4. **Non-Convergence:** If the algorithm fails to converge, check:
+   - Insufficient overlap between samples (identifiability issue)
+   - Ill-conditioned input matrices (increase `control$ridge`)
+
+### Iteration History
+
+The function returns a `history` data frame containing:
+
+- `iteration`: Iteration number
+- `rel_change`: $\max(\Delta_{\boldsymbol{\Sigma}}, \Delta_{\gamma})$
+- `log_likelihood`: Observed-data log-likelihood $\mathcal{L}(\boldsymbol{\theta}^{(t)})$
+
+This allows users to diagnose convergence behavior and detect potential issues.
+
+# Parameter Scales and Output Interpretation
+
+## Two Scales: Parameter vs. Data
+
+The CovCombR package distinguishes between two scales for the estimated covariance matrix:
+
+### Parameter Scale: $\hat{\boldsymbol{\Sigma}}$
+
+**Obtained via:** `coef(fit)` or `fit$Sigma_hat`
+
+**Definition:** The **per-degree-of-freedom scale matrix** estimated directly by the EM algorithm.
+
+**Interpretation:** This is the $\boldsymbol{\Sigma}$ parameter in the Wishart model $\mathbf{W}_k \sim \text{Wishart}(\nu_k, \alpha_k \gamma \boldsymbol{\Sigma})$.
+
+**Use Cases:**
+- Statistical inference about covariance parameters
+- Hypothesis testing (e.g., testing $\boldsymbol{\Sigma}_{ij} = 0$)
+- Comparing covariance structures across populations
+- Meta-analysis where per-df scale is the natural unit
+
+**Standard Errors:** Available via `fit$Sigma_se` (on the same per-df scale)
+
+### Data Scale: $\hat{\mathbf{S}}$
+
+**Obtained via:** `fitted(fit)` or `fit$S_hat`
+
+**Definition:** The **aggregated covariance estimate** rescaled to match the data:
+
+$$\hat{\mathbf{S}} = \hat{\gamma} \cdot \hat{\boldsymbol{\Sigma}}$$
+
+where $\hat{\gamma}$ is the global scale parameter MLE.
+
+**Interpretation:** This is the "sample covariance" estimate that would be obtained if we had a single complete dataset. It matches the scale of the input $\{\mathbf{S}_k\}$ matrices.
+
+**Use Cases:**
+- Genomic prediction (GRM for GBLUP)
+- Downstream statistical modeling (multivariate regression, PCA)
+- Covariance-based machine learning methods
+- Visualization and exploratory analysis
+
+**Standard Errors:** Available via `fit$S_hat_se` (on the data scale)
+
+### Relationship Between Scales
+
+The mathematical relationship is:
+
+$$\hat{\mathbf{S}} = \hat{\gamma} \cdot \hat{\boldsymbol{\Sigma}}$$
+
+where $\hat{\gamma}$ is stored in `fit$S_hat_scale`.
+
+**Important Identity:**
+```r
+all.equal(fit$S_hat, fit$S_hat_scale * fit$Sigma_hat)  # TRUE
+```
+
+### When to Use Which Scale?
+
+| Task | Use | Rationale |
+|------|-----|-----------|
+| Genomic prediction (GBLUP) | `fit$S_hat` | Prediction requires data-scale GRM |
+| Hypothesis testing ($\rho = 0$?) | `fit$Sigma_hat` + `fit$Sigma_se` | Statistical inference uses per-df scale |
+| Combining with other studies | `fit$Sigma_hat` | Meta-analysis on parameter scale |
+| Multivariate regression | `fit$S_hat` | Input covariance on data scale |
+| Visualization (heatmap) | `fit$S_hat` or `cov2cor(fit$S_hat)` | Data scale matches intuition |
+
+### Example: Interpretation
+
+Suppose we fit a model with 3 studies:
+
+```r
+fit <- fit_covcomb(S_list, nu = c(100, 150, 200))
+```
+
+Then:
+
+- `fit$Sigma_hat[i,j]` estimates the per-degree-of-freedom covariance between variables $i$ and $j$
+- `fit$S_hat[i,j]` estimates the covariance on the pooled data scale (as if we combined all 450 observations)
+- `fit$S_hat_scale` is the global scale factor $\hat{\gamma}$ relating the two scales
+
+# Standard Errors and Uncertainty Quantification
+
+Estimating uncertainty in the combined covariance matrix is crucial for downstream inference. CovCombR offers two methods for computing standard errors.
+
+## Plugin Standard Errors (`se_method = "plugin"`)
+
+### Method Overview
+
+The **plugin method** uses the asymptotic variance of the Wishart MLE based on the **observed Fisher information**. This is fast and provides reasonable approximations for large samples.
+
+### Theoretical Basis
+
+For a single complete Wishart sample $\mathbf{W} \sim \text{Wishart}(\nu, \boldsymbol{\Sigma})$, the asymptotic variance of the sample covariance $\mathbf{S} = \mathbf{W}/\nu$ is:
+
+$$\text{Var}(S_{ij}) = \frac{1}{\nu}(\Sigma_{ii}\Sigma_{jj} + \Sigma_{ij}^2)$$
+
+### Implementation for Incomplete Data
+
+For our multi-sample incomplete data setting, the plugin SE for each entry is:
+
+$$\text{SE}(\hat{\Sigma}_{ij}) = \sqrt{\frac{\hat{\Sigma}_{ii} \hat{\Sigma}_{jj} + \hat{\Sigma}_{ij}^2}{\text{coverage}_{ij}}}$$
+
+where $\text{coverage}_{ij}$ is the **total effective degrees of freedom** for the $(i,j)$ entry:
+
+$$\text{coverage}_{ij} = \sum_{k: i,j \in \mathcal{O}_k} \nu_k$$
+
+This sums degrees of freedom across all studies where variables $i$ and $j$ are jointly observed.
+
+### Special Cases
+
+- **Never jointly observed:** If no study observes both $i$ and $j$, then $\text{coverage}_{ij} = 0$ and $\text{SE}(\hat{\Sigma}_{ij}) = \text{NA}$. This correctly reflects that the covariance is **not identifiable** from the data.
+- **Partially observed:** Lower coverage $\Rightarrow$ higher uncertainty
+- **Fully observed:** If all studies observe $(i,j)$, coverage is maximal
+
+### Advantages
+
+- **Fast:** No additional model fitting required
+- **Closed-form:** Direct computation from $\hat{\boldsymbol{\Sigma}}$ and coverage matrix
+- **Identifiability check:** Returns `NA` for unidentifiable entries
+
+### Limitations
+
+- **Asymptotic:** Only accurate for large $\nu_k$
+- **Ignores EM uncertainty:** Treats pseudo-complete data as if it were observed
+- **May underestimate:** Especially when missingness is severe or $\nu_k$ is small
+
+### Output
+
+- `fit$Sigma_se`: Standard errors on parameter scale
+- `fit$S_hat_se`: Standard errors on data scale (scaled by $\hat{\gamma}$)
+
+## Bootstrap Standard Errors (`se_method = "bootstrap"`)
+
+### Method Overview
+
+The **parametric bootstrap** simulates new incomplete datasets from the fitted model and refits the EM algorithm $B$ times. Standard errors are the empirical standard deviations across bootstrap replicates.
+
+### Algorithm
+
+For $b = 1, \ldots, B$:
+
+1. **Simulate:** Generate synthetic data from the fitted model:
+   $$\mathbf{W}_k^{(b)} \sim \text{Wishart}(\nu_k, \hat{\alpha}_k \hat{\gamma} \hat{\boldsymbol{\Sigma}})$$
+   Extract observed blocks: $\mathbf{S}_k^{(b)} = \mathbf{W}_k^{(b)}[\mathcal{O}_k, \mathcal{O}_k]$
+
+2. **Refit:** Run `fit_covcomb()` on $\{\mathbf{S}_k^{(b)}\}$ with `se_method = "none"`
+
+3. **Store:** Save $\hat{\boldsymbol{\Sigma}}^{(b)}$ from the bootstrap fit
+
+After $B$ successful replicates, compute:
+
+$$\text{SE}(\hat{\Sigma}_{ij}) = \text{sd}\{\hat{\Sigma}_{ij}^{(1)}, \ldots, \hat{\Sigma}_{ij}^{(B)}\}$$
+
+### Configuration
+
+Bootstrap behavior is controlled via `control$bootstrap`:
+
+- `B`: Number of replicates (default: 200)
+- `seed`: RNG seed for reproducibility
+- `progress`: Show progress bar if `TRUE`
+- `verbose`: Print warnings for failed replicates
+- `retain_samples`: Save bootstrap sample array if `TRUE`
+- `init_sigma`: Initialization for bootstrap fits (default: use converged $\hat{\boldsymbol{\Sigma}}$)
+
+### Convergence Handling
+
+Not all bootstrap replicates may converge (especially with severe missingness or small $\nu_k$). The algorithm:
+
+1. Attempts $B$ bootstrap fits
+2. Discards non-converged replicates
+3. Computes SEs using only converged replicates
+4. Reports success rate in `fit$bootstrap$successes`
+
+**Recommendation:** Ensure at least 80% success rate (i.e., $\geq 160$ successes for $B=200$). If success rate is low, consider:
+- Increasing convergence tolerance
+- Using `init_sigma = fit$Sigma_hat` to start near the MLE
+- Increasing `control$max_iter`
+
+### Advantages
+
+- **Accurate:** Accounts for EM uncertainty and missing data patterns
+- **Finite-sample:** Valid for small $\nu_k$
+- **Distribution:** Can examine bootstrap distribution (if `retain_samples = TRUE`)
+
+### Limitations
+
+- **Slow:** ~100× slower than plugin (requires $B$ full EM fits)
+- **Stochastic:** Results vary slightly across runs (use `seed` for reproducibility)
+- **Convergence:** May have failures if model is poorly identified
+
+### Output
+
+- `fit$Sigma_se`: Bootstrap standard errors on parameter scale
+- `fit$S_hat_se`: Bootstrap standard errors on data scale
+- `fit$bootstrap`: Metadata (B, successes, failures, seed)
+- `fit$bootstrap_samples`: Array of bootstrap estimates (if `retain_samples = TRUE`)
+
+### Example Usage
+
+```r
+fit_boot <- fit_covcomb(
+  S_list, nu,
+  se_method = "bootstrap",
+  control = list(
+    bootstrap = list(
+      B = 500,
+      seed = 2025,
+      progress = TRUE,
+      retain_samples = FALSE
+    )
+  )
+)
+
+# Check success rate
+fit_boot$bootstrap$successes / fit_boot$bootstrap$B  # Should be > 0.8
+
+# Extract SEs
+se_param <- fit_boot$Sigma_se  # Parameter scale
+se_data <- fit_boot$S_hat_se   # Data scale
+```
+
+## Comparison: Plugin vs. Bootstrap
+
+| Criterion | Plugin | Bootstrap |
+|-----------|--------|-----------|
+| **Speed** | Fast (~1 sec) | Slow (~2 min for B=200) |
+| **Accuracy** | Approximate | More accurate |
+| **Sample size** | Large $\nu_k$ | Any $\nu_k$ |
+| **Identifiability** | Explicit (returns NA) | Implicit (high SE) |
+| **Reproducibility** | Deterministic | Stochastic (use seed) |
+| **Recommendation** | Default for exploration | Use for final inference |
+
+# Implementation Details and Numerical Methods
+
+## Numerical Stability
+
+### Cholesky Decomposition for Matrix Inversion
+
+Matrix inversion is the most numerically sensitive operation in the EM algorithm. Rather than computing $\boldsymbol{\Sigma}_{OO}^{-1}$ via direct inversion (using `solve()`), the implementation uses **Cholesky decomposition**:
+
+1. Compute $\mathbf{L} = \text{chol}(\boldsymbol{\Sigma}_{OO})$ where $\mathbf{L}^T \mathbf{L} = \boldsymbol{\Sigma}_{OO}$
+2. Compute inverse as $\boldsymbol{\Sigma}_{OO}^{-1} = (\mathbf{L}^T \mathbf{L})^{-1} = \mathbf{L}^{-1} (\mathbf{L}^T)^{-1}$
+
+This is implemented via R's `chol2inv(chol(A))` function.
+
+**Advantages:**
+- **Numerically stable:** Cholesky is more stable than direct inversion
+- **Positive definiteness check:** Cholesky fails if matrix is not PD, providing early error detection
+- **Computational efficiency:** $O(p^3/3)$ for Cholesky vs. $O(p^3)$ for direct inversion
+
+### Ridge Regularization
+
+To handle near-singular or ill-conditioned matrices, the implementation adds a **ridge penalty**:
+
+$$\boldsymbol{\Sigma}_{OO, \text{ridge}} = \boldsymbol{\Sigma}_{OO} + \lambda \mathbf{I}$$
+
+where $\lambda$ is the ridge parameter (default: $10^{-8}$).
+
+**Adaptive Ridge Strategy:**
+
+If Cholesky decomposition fails (matrix not PD), the algorithm:
+
+1. Increases ridge: $\lambda \leftarrow 10\lambda$
+2. Retries Cholesky decomposition
+3. Repeats up to 10 attempts (ridge up to $10^{-7}$)
+4. Throws error if all attempts fail
+
+This is implemented in the `.safe_chol_inverse()` internal function.
+
+**When to Adjust Ridge:**
+
+- **Increase ridge** if you see warnings about Cholesky failures
+- **Decrease ridge** if concerned about bias in small-sample settings
+- Monitor condition number via `summary(fit)` eigenvalue spectrum
+
+### Symmetry Enforcement
+
+Due to floating-point arithmetic, matrices can accumulate small asymmetries. After each E-step and M-step, matrices are **symmetrized**:
+
+$$\mathbf{A}_{\text{sym}} = \frac{1}{2}(\mathbf{A} + \mathbf{A}^T)$$
+
+This ensures:
+- Eigendecomposition remains numerically stable
+- Positive definiteness projection works correctly
+- Output matrices are exactly symmetric
+
+### Positive Definiteness Projection
+
+After the M-step, $\boldsymbol{\Sigma}^{(t+1)}$ may have small negative eigenvalues due to numerical errors. The algorithm projects to the PD cone:
+
+1. Compute eigendecomposition: $\boldsymbol{\Sigma} = \mathbf{V} \boldsymbol{\Lambda} \mathbf{V}^T$
+2. Floor eigenvalues: $\tilde{\lambda}_i = \max(\lambda_i, \lambda_{\min})$
+3. Reconstruct: $\tilde{\boldsymbol{\Sigma}} = \mathbf{V} \tilde{\boldsymbol{\Lambda}} \mathbf{V}^T$
+
+where $\lambda_{\min} = 10^{-10}$ (default).
+
+**Special Case Handling:**
+
+For 1×1 matrices (single variable), R's `diag()` function has ambiguous behavior. The implementation uses:
+
+```r
+diag(eigenvalues, nrow = length(eigenvalues))
+```
+
+to ensure correct reconstruction.
+
+## Initialization Strategies
+
+### "avg_padded" (Default)
+
+1. For each entry $(i,j)$, average $\mathbf{S}_k[i,j]$ across studies where both $i$ and $j$ are observed
+2. For unobserved entries, use 0 for off-diagonal, 1 for diagonal
+3. Ensure positive definiteness via eigenvalue projection
+
+**Advantage:** Uses all available information from observed data
+
+**Limitation:** May produce ill-conditioned initial matrix if overlap is sparse
+
+### "identity"
+
+Initialize $\boldsymbol{\Sigma}^{(0)} = \mathbf{I}$ (identity matrix).
+
+**Advantage:** Always well-conditioned
+
+**Limitation:** May require more EM iterations to converge
+
+### Custom Matrix
+
+Users can provide a custom $p \times p$ initialization matrix.
+
+**Use case:** Warm-starting from a previous fit or domain knowledge
+
+## Performance Optimizations
+
+### Memoization Cache (v1.4.0+)
+
+The E-step requires computing expectations involving **commutation matrices** for vectorized operations. Version 1.4.0 introduced a **memoization cache** that pre-computes and stores these matrices.
+
+**Impact:** 26,000× speedup for repeated operations (reported in NEWS.md)
+
+**Details:** Commutation matrices $\mathbf{K}_{p,q}$ satisfy $\text{vec}(\mathbf{A}^T) = \mathbf{K}_{p,q} \text{vec}(\mathbf{A})$. Computing these on-the-fly is expensive; caching eliminates redundant computation.
+
+### Sparse Missing Patterns
+
+When a study $k$ has no missing variables ($|\mathcal{M}_k| = 0$), the E-step skips all conditional expectation calculations and simply returns $\mathbf{S}_k$. This special case detection avoids unnecessary computation.
+
+### Early Termination
+
+If relative change falls below tolerance, the algorithm immediately terminates without running the full `max_iter` iterations. Typical convergence occurs in 10-50 iterations.
+
+## Identifiability and Diagnostics
+
+### Coverage Matrix
+
+The algorithm computes a **coverage matrix** $\mathbf{C} \in \mathbb{R}^{p \times p}$ where:
+
+$$C_{ij} = \sum_{k: i,j \in \mathcal{O}_k} \nu_k$$
+
+This quantifies the total degrees of freedom available for estimating each covariance entry.
+
+**Interpretation:**
+- $C_{ij} = 0$: Variables $i$ and $j$ are **never jointly observed** → covariance is **not identifiable**
+- $C_{ij} < \sum_k \nu_k / 2$: Sparse coverage → high uncertainty
+- $C_{ij} = \sum_k \nu_k$: Full coverage → lowest uncertainty
+
+### Condition Number Monitoring
+
+The implementation computes and reports:
+
+$$\kappa(\boldsymbol{\Sigma}) = \frac{\lambda_{\max}(\boldsymbol{\Sigma})}{\lambda_{\min}(\boldsymbol{\Sigma})}$$
+
+**Interpretation:**
+- $\kappa < 10^3$: Well-conditioned (good)
+- $10^3 < \kappa < 10^6$: Moderate conditioning (acceptable)
+- $\kappa > 10^6$: Ill-conditioned (warning issued)
+- $\kappa > 10^{10}$: Severe ill-conditioning (likely identifiability issue)
+
+### Warnings and Messages
+
+The implementation provides diagnostic warnings for:
+
+1. **Single sample ($K=1$):** Model is not identifiable; unobserved variables will have arbitrary values
+2. **High condition number ($\kappa > 10^4$):** Suggests insufficient overlap or numerical issues
+3. **Very high condition number ($\kappa > 10^6$):** Strong warning about ill-conditioning
+4. **Small minimum eigenvalue:** Eigenvalue near threshold suggests rank deficiency
+5. **Unobserved variables:** Warning lists variables never observed in any study
+
+## Algorithmic Complexity
+
+### Time Complexity per Iteration
+
+| Operation | Complexity | Dominant Terms |
+|-----------|-----------|----------------|
+| E-step (all samples) | $O(K \cdot p^3)$ | Cholesky decomposition $\times K$ |
+| M-step | $O(K \cdot p^2)$ | Matrix summation |
+| Gamma update | $O(K \cdot p^3)$ | Cholesky $\times K$ |
+| Convergence check | $O(p^2)$ | Frobenius norm |
+| **Total per iteration** | $O(K \cdot p^3)$ | Matrix inversions dominate |
+
+### Space Complexity
+
+| Storage | Size | Description |
+|---------|------|-------------|
+| $\boldsymbol{\Sigma}$ | $O(p^2)$ | Current covariance estimate |
+| $\{\tilde{\mathbf{W}}_k\}$ | $O(K \cdot p^2)$ | Pseudo-complete data |
+| $\{\mathbf{S}_k\}$ | $O(\sum_k p_k^2)$ | Input data (sparse) |
+| History | $O(T)$ | Iteration history ($T$ = iterations) |
+| **Total** | $O(K \cdot p^2)$ | Scales with studies × variables² |
+
+### Practical Scalability
+
+**Tested Performance:**
+- $p \leq 100$: Fast (< 1 second)
+- $p \approx 500$: Moderate (10-30 seconds)
+- $p \approx 1000$: Slow (1-5 minutes)
+- $p > 2000$: Very slow (consider sparsity or dimension reduction)
+
+**Bottleneck:** Matrix inversions scale as $O(p^3)$, limiting scalability for very large $p$.
+
+## Error Handling
+
+The implementation validates inputs and provides informative error messages:
+
+1. **Missing row/column names:** Each $\mathbf{S}_k$ must have matching row and column names
+2. **Dimension mismatch:** Names in $\mathbf{S}_k$ must be consistent across samples
+3. **Invalid degrees of freedom:** $\nu_k$ must be positive and greater than $p_k - 1$
+4. **Non-positive definite input:** Warns if input $\mathbf{S}_k$ is not PD
+5. **Convergence failure:** Reports non-convergence and provides diagnostics
+
+## Reproducibility
+
+### Random Number Generation
+
+- Bootstrap SEs use `stats::rWishart()` for simulation
+- Set `control$bootstrap$seed` for reproducible results
+- Algorithm preserves and restores R's RNG state after bootstrap
+
+### Floating-Point Consistency
+
+- Results are deterministic (except for bootstrap)
+- Small variations (<1e-10) may occur across platforms due to BLAS/LAPACK differences
+- Ridge regularization ensures consistency across runs
+
+# Theoretical Foundations and Extensions
+
+## Connection to Classical Theory
+
+### Wishart Distribution
+
+The **Wishart distribution** is a multivariate generalization of the chi-squared distribution. If $\mathbf{X}_1, \ldots, \mathbf{X}_n \sim \mathcal{N}(\mathbf{0}, \boldsymbol{\Sigma})$ are independent $p$-dimensional Gaussians, then:
+
+$$\mathbf{W} = \sum_{i=1}^n \mathbf{X}_i \mathbf{X}_i^T \sim \text{Wishart}(n, \boldsymbol{\Sigma})$$
+
+**Properties:**
+- $\mathbb{E}[\mathbf{W}] = n \boldsymbol{\Sigma}$
+- $\text{Var}(W_{ij}) = n(\Sigma_{ii}\Sigma_{jj} + \Sigma_{ij}^2)$
+- Density: $p(\mathbf{W}) \propto |\mathbf{W}|^{(n-p-1)/2} \exp\left(-\frac{1}{2}\text{tr}(\boldsymbol{\Sigma}^{-1}\mathbf{W})\right)$
+
+For sample covariance matrices, if $n > p$ observations are used to compute $\mathbf{S}$, then $(n-1)\mathbf{S} \sim \text{Wishart}(n-1, \boldsymbol{\Sigma})$.
+
+### Missing Data and EM Theory
+
+The EM algorithm (Dempster et al., 1977) is a general framework for maximum likelihood estimation with incomplete data:
+
+1. **Complete-data likelihood:** Easy to maximize if we had complete data
+2. **E-step:** Replace missing data with their conditional expectations
+3. **M-step:** Maximize the expected complete-data likelihood
+
+**Key Theorem:** Each EM iteration increases the observed-data log-likelihood:
+
+$$\mathcal{L}(\boldsymbol{\theta}^{(t+1)}) \geq \mathcal{L}(\boldsymbol{\theta}^{(t)})$$
+
+with equality only at stationary points. This guarantees convergence to at least a local maximum.
+
+### Partitioned Wishart Theory
+
+When $\mathbf{W} \sim \text{Wishart}(\nu, \boldsymbol{\Sigma})$ and we partition $\mathbf{W}$ into observed ($O$) and missing ($M$) blocks, the conditional distribution is (Anderson, 2003):
+
+$$\mathbf{W}_{MM} \mid \mathbf{W}_{OO} \sim \text{Wishart}(\nu - |O|, \boldsymbol{\Delta}) + \mathbf{B} \mathbf{W}_{OO} \mathbf{B}^T$$
+
+where $\boldsymbol{\Delta} = \boldsymbol{\Sigma}_{MM} - \boldsymbol{\Sigma}_{MO}\boldsymbol{\Sigma}_{OO}^{-1}\boldsymbol{\Sigma}_{OM}$ is the Schur complement.
+
+This is the **theoretical foundation** for the E-step in CovCombR.
+
+## Identifiability Conditions
+
+### When is $\boldsymbol{\Sigma}$ Identifiable?
+
+For the covariance $\boldsymbol{\Sigma}$ to be uniquely determined from incomplete data, we need:
+
+1. **Connectedness:** The **covariance graph** must be connected, where:
+   - Vertices = variables $\{1, \ldots, p\}$
+   - Edges = pairs $(i,j)$ jointly observed in at least one study
+
+   If the graph is disconnected, covariances between components are unidentifiable.
+
+2. **Sufficient overlap:** For each variable pair $(i,j)$, at least one study must observe both.
+
+3. **Multiple samples:** With $K=1$ sample, unobserved variables are completely arbitrary (no information).
+
+### Degrees of Freedom Requirements
+
+For asymptotic theory to apply:
+
+- Each $\nu_k > p - 1$ (Wishart requires $\nu > p-1$ for non-degeneracy)
+- Total effective degrees of freedom $\sum_k \nu_k > p(p+1)/2$ (number of unique covariance entries)
+
+In practice, larger $\nu_k$ values provide more stable estimates and better SE approximations.
+
+## Comparison to Alternative Methods
+
+### Naive Stitching
+
+**Method:** Directly combine overlapping entries by averaging.
+
+**Issues:**
+- Not guaranteed positive definite
+- Ignores statistical dependencies
+- No uncertainty quantification
+- Biased when overlap is sparse
+
+**CovCombR Advantage:** Statistically principled, PD guarantee, SE estimates.
+
+### Complete Case Analysis
+
+**Method:** Use only variables observed in all studies.
+
+**Issues:**
+- Massive information loss
+- Biased if missingness is related to outcomes
+- Reduces effective sample size
+
+**CovCombR Advantage:** Uses all available data, valid under MAR assumption.
+
+### Pairwise Maximum Likelihood
+
+**Method:** Estimate each $\boldsymbol{\Sigma}_{ij}$ independently using studies observing both $i$ and $j$.
+
+**Issues:**
+- Not guaranteed PD
+- Ignores dependencies between entries
+- Inefficient (doesn't share information)
+
+**CovCombR Advantage:** Joint estimation, PD guarantee, borrows strength across entries.
+
+### Multiple Imputation (MI)
+
+**Method:** Impute missing Wishart blocks multiple times, fit to each imputed dataset, pool results.
+
+**Comparison:**
+- **MI:** More flexible (can incorporate auxiliary variables), but computationally expensive
+- **CovCombR:** Direct likelihood-based inference, more efficient for Wishart model
+
+Both are valid under MAR; CovCombR is preferable when the Wishart model is appropriate.
+
+## Extensions and Future Directions
+
+### Structured Covariance
+
+The current implementation assumes unstructured $\boldsymbol{\Sigma}$. Potential extensions:
+
+- **Factor models:** $\boldsymbol{\Sigma} = \mathbf{L}\mathbf{L}^T + \boldsymbol{\Psi}$ (low-rank + diagonal)
+- **Sparse estimation:** Penalized EM with $\ell_1$ penalty for sparsity
+- **Banded structure:** $\boldsymbol{\Sigma}_{ij} = 0$ for $|i-j| > k$
+
+### Robust Estimation
+
+Current implementation assumes Wishart (Gaussian) data. For heavy-tailed or contaminated data:
+
+- **t-Wishart:** Replace Wishart with generalized Wishart based on multivariate t
+- **M-estimation:** Use robust loss functions in M-step
+- **Outlier detection:** Flag samples with extreme likelihood contributions
+
+### Bayesian Variant
+
+A Bayesian extension could:
+
+- Place prior on $\boldsymbol{\Sigma}$ (e.g., Inverse-Wishart)
+- Use MCMC or variational inference instead of EM
+- Provide full posterior uncertainty (not just SEs)
+- Naturally incorporate prior knowledge
+
+### High-Dimensional Extensions
+
+For $p \gg K$ or very large $p$:
+
+- **Regularized EM:** Add ridge or LASSO penalties
+- **Sparse factor models:** Reduce effective dimension
+- **Distributed computation:** Parallelize E-step across samples
+
+## Software Implementation Notes
+
+### Key Design Choices
+
+1. **Pure R Implementation:** No compiled code (C/C++/Fortran), ensuring:
+   - Portability across platforms
+   - Easy installation (no compiler required)
+   - Maintainability
+
+   **Trade-off:** Slower than optimized compiled code, but acceptable for $p \leq 1000$.
+
+2. **Minimal Dependencies:** Only base R `stats` package required.
+   - Reduces risk of breaking changes
+   - Simplifies installation
+   - Ensures long-term stability
+
+3. **S3 Object System:** Uses standard R generic methods (`print`, `summary`, `coef`, `fitted`).
+   - Familiar interface for R users
+   - Integrates with existing workflows
+   - Extensible via new methods
+
+### Comparison to Other Packages
+
+| Package | Functionality | Missing Data | SE Methods | Language |
+|---------|---------------|--------------|------------|----------|
+| **CovCombR** | Multi-sample covariance combination | Arbitrary patterns | Plugin, Bootstrap | R |
+| **lavaan** | SEM, covariance structure | Complete data | Asymptotic | R |
+| **corpcor** | Shrinkage estimation | Complete data | None | R |
+| **glasso** | Sparse inverse covariance | Complete data | Bootstrap | R |
+
+**Unique Features of CovCombR:**
+- Handles arbitrary incomplete data patterns
+- Multi-sample EM algorithm
+- Explicit identifiability checks
+- Bootstrap SE for finite samples
+
+# References
+
+## Core EM and Missing Data Theory
+
+Dempster, A. P., Laird, N. M., & Rubin, D. B. (1977). Maximum likelihood from incomplete data via the EM algorithm. *Journal of the Royal Statistical Society, Series B*, 39(1), 1-38.
+
+McLachlan, G. J., & Krishnan, T. (2008). *The EM Algorithm and Extensions* (2nd ed.). Wiley Series in Probability and Statistics.
+
+Little, R. J., & Rubin, D. B. (2019). *Statistical Analysis with Missing Data* (3rd ed.). Wiley.
+
+## Wishart Distribution Theory
+
+Anderson, T. W. (2003). *An Introduction to Multivariate Statistical Analysis* (3rd ed.). Wiley.
+
+Muirhead, R. J. (1982). *Aspects of Multivariate Statistical Theory*. Wiley.
+
+Gupta, A. K., & Nagar, D. K. (1999). *Matrix Variate Distributions*. Chapman & Hall/CRC.
+
+## Genomic Applications
+
+VanRaden, P. M. (2008). Efficient methods to compute genomic predictions. *Journal of Dairy Science*, 91(11), 4414-4423.
+
+Legarra, A., Aguilar, I., & Misztal, I. (2009). A relationship matrix including full pedigree and genomic information. *Journal of Dairy Science*, 92(9), 4656-4663.
+
+## Numerical Methods
+
+Golub, G. H., & Van Loan, C. F. (2013). *Matrix Computations* (4th ed.). Johns Hopkins University Press.
+
+Higham, N. J. (2002). *Accuracy and Stability of Numerical Algorithms* (2nd ed.). SIAM.
+
+## Bootstrap and Standard Errors
+
+Efron, B., & Tibshirani, R. J. (1994). *An Introduction to the Bootstrap*. Chapman & Hall/CRC.
+
+Louis, T. A. (1982). Finding the observed information matrix when using the EM algorithm. *Journal of the Royal Statistical Society, Series B*, 44(2), 226-233.
+
+## Software and Implementation
+
+R Core Team (2024). *R: A Language and Environment for Statistical Computing*. R Foundation for Statistical Computing, Vienna, Austria. https://www.R-project.org/
+
+Bates, D., & Maechler, M. (2024). *Matrix: Sparse and Dense Matrix Classes and Methods*. R package. https://CRAN.R-project.org/package=Matrix

@@ -1,0 +1,7 @@
+url: https://dakdemir-nmdp.github.io/CovCombR/
+
+template:
+  bootstrap: 5
+
+development:
+  mode: release
