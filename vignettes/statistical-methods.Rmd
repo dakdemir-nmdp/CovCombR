@@ -104,9 +104,15 @@ If we had observed the complete Wishart matrices $\mathbf{W}_1, \ldots, \mathbf{
 
 $$\ell_{\text{complete}}(\boldsymbol{\Sigma}, \{\alpha_k\}, \gamma) = \sum_{k=1}^K \log p(\mathbf{W}_k \mid \boldsymbol{\Sigma}, \alpha_k, \gamma, \nu_k)$$
 
-where the Wishart density is:
+The Wishart log-likelihood for a single sample (including normalizing constants) is:
 
-$$p(\mathbf{W}_k \mid \boldsymbol{\Sigma}, \alpha_k, \gamma, \nu_k) \propto |\mathbf{W}_k|^{(\nu_k - p - 1)/2} \exp\left(-\frac{1}{2\alpha_k\gamma} \text{tr}(\boldsymbol{\Sigma}^{-1} \mathbf{W}_k)\right)$$
+$$\log p(\mathbf{W}_k \mid \boldsymbol{\Sigma}, \alpha_k, \gamma, \nu_k) = C_k + \frac{\nu_k - p - 1}{2} \log|\mathbf{W}_k| - \frac{\nu_k}{2} \log|\alpha_k\gamma\boldsymbol{\Sigma}| - \frac{1}{2\alpha_k\gamma} \text{tr}(\boldsymbol{\Sigma}^{-1} \mathbf{W}_k)$$
+
+where the normalizing constant is:
+
+$$C_k = -\frac{\nu_k p}{2} \log(2) - \frac{p(p-1)}{4} \log(\pi) - \sum_{j=1}^p \log \Gamma\left(\frac{\nu_k + 1 - j}{2}\right)$$
+
+**Note:** The CovCombR implementation (v1.5.0+) includes these constant terms in the log-likelihood computation for accurate model comparison and diagnostic purposes. Prior versions omitted constants, which is valid for optimization but not for likelihood ratio tests or information criteria (AIC, BIC).
 
 The complete-data sufficient statistics are:
 
@@ -283,7 +289,14 @@ The function returns a `history` data frame containing:
 
 - `iteration`: Iteration number
 - `rel_change`: $\max(\Delta_{\boldsymbol{\Sigma}}, \Delta_{\gamma})$
-- `log_likelihood`: Observed-data log-likelihood $\mathcal{L}(\boldsymbol{\theta}^{(t)})$
+- `log_likelihood`: Observed-data log-likelihood $\mathcal{L}(\boldsymbol{\theta}^{(t)})$ **including normalizing constants**
+
+**Note:** Version 1.5.0+ includes the full Wishart normalizing constants in the log-likelihood. This enables:
+- Model comparison via likelihood ratio tests
+- Information criteria (AIC, BIC) computation
+- Theoretical validation against known distributions
+
+The constants do not affect the EM optimization (they're independent of parameters), but they ensure the reported log-likelihood values are theoretically correct and comparable across models.
 
 This allows users to diagnose convergence behavior and detect potential issues.
 
@@ -507,16 +520,156 @@ se_param <- fit_boot$Sigma_se  # Parameter scale
 se_data <- fit_boot$S_hat_se   # Data scale
 ```
 
-## Comparison: Plugin vs. Bootstrap
+## Supplemented EM (SEM) Standard Errors (`se_method = "sem"`)
 
-| Criterion | Plugin | Bootstrap |
-|-----------|--------|-----------|
-| **Speed** | Fast (~1 sec) | Slow (~2 min for B=200) |
-| **Accuracy** | Approximate | More accurate |
-| **Sample size** | Large $\nu_k$ | Any $\nu_k$ |
-| **Identifiability** | Explicit (returns NA) | Implicit (high SE) |
-| **Reproducibility** | Deterministic | Stochastic (use seed) |
-| **Recommendation** | Default for exploration | Use for final inference |
+### Method Overview
+
+The **Supplemented EM (SEM)** method (Meng & Rubin, 1991) computes asymptotic standard errors using the observed information matrix derived from the EM algorithm itself. This provides a fast alternative to bootstrap that accounts for missing data uncertainty.
+
+### Theoretical Basis
+
+The SEM method exploits the relationship between the complete-data information and the observed-data information:
+
+$$I_{\text{obs}}(\boldsymbol{\theta}) = I_{\text{com}}(\boldsymbol{\theta}) - I_{\text{mis}}(\boldsymbol{\theta})$$
+
+where:
+
+- $I_{\text{com}}$ is the **complete-data information matrix** (negative Hessian of the Q function)
+- $I_{\text{mis}}$ is the **missing information** due to incomplete data
+- $I_{\text{obs}}$ is the **observed information matrix**
+
+The key insight is that the missing information can be computed from the **EM rate matrix** $\mathbf{R}$:
+
+$$I_{\text{mis}} = I_{\text{com}}^{1/2} \mathbf{R} I_{\text{com}}^{1/2}$$
+
+where $\mathbf{R} = \frac{\partial M(\boldsymbol{\theta})}{\partial \boldsymbol{\theta}^\top}\bigg|_{\hat{\boldsymbol{\theta}}}$ is the Jacobian of the EM mapping $M$ at convergence.
+
+### Implementation Strategy
+
+To avoid numerical issues with direct covariance parameterization, CovCombR uses **log-Cholesky parameterization**:
+
+1. **Parameterization:** $\boldsymbol{\Sigma} = \mathbf{L}\mathbf{L}^\top$ where $\mathbf{L}$ is lower triangular with $L_{ii} = \exp(\eta_i)$
+
+2. **Parameter vector:** $\boldsymbol{\theta} = (\eta_1, \ldots, \eta_p, L_{21}, L_{31}, L_{32}, \ldots)$ ensures positive definiteness
+
+3. **Complete-data information:** Compute $I_{\text{com}}(\hat{\boldsymbol{\theta}})$ as the negative Hessian of the Q function with respect to $\boldsymbol{\theta}$
+
+4. **EM rate matrix:** Estimate $\mathbf{R}$ via finite differences:
+   - Perturb each parameter $\theta_j \to \theta_j + h$
+   - Run one EM iteration to get $M(\boldsymbol{\theta} + h\mathbf{e}_j)$
+   - Compute $\mathbf{R} \approx [\frac{M(\boldsymbol{\theta} + h\mathbf{e}_j) - M(\hat{\boldsymbol{\theta}})}{h}]$
+
+5. **Observed information:** Form $I_{\text{obs}} = I_{\text{com}} - I_{\text{com}}^{1/2} \mathbf{R} I_{\text{com}}^{1/2}$
+
+6. **Delta method:** Map SEs from $\boldsymbol{\theta}$ scale back to $\boldsymbol{\Sigma}$ scale using the Jacobian
+
+### Algorithm Steps
+
+For the fitted model with $\hat{\boldsymbol{\Sigma}}$ and $\{\hat{\alpha}_k\}$:
+
+1. Convert $\hat{\boldsymbol{\Sigma}}$ to log-Cholesky parameters $\hat{\boldsymbol{\theta}}$
+
+2. Compute complete-data information by numerical differentiation of the Q function
+
+3. Estimate EM rate matrix by perturbing $\boldsymbol{\theta}$ and running one EM step for each perturbation
+
+4. Form observed information: $I_{\text{obs}} = I_{\text{com}}^{1/2}(\mathbf{I} - \mathbf{R})I_{\text{com}}^{1/2}$
+
+5. Invert to get variance: $\text{Var}(\hat{\boldsymbol{\theta}}) = I_{\text{obs}}^{-1}$
+
+6. Apply delta method to obtain $\text{Var}(\text{vec}(\hat{\boldsymbol{\Sigma}}))$
+
+7. Extract standard errors: $\text{SE}(\hat{\Sigma}_{ij}) = \sqrt{\text{Var}(\hat{\Sigma}_{ij})}$
+
+### Diagnostic Information
+
+The SEM method provides additional diagnostic information in `fit$sem`:
+
+- **`I_obs`**: Observed information matrix in log-Cholesky parameterization
+- **`I_com`**: Complete-data information matrix
+- **`R`**: EM rate matrix (spectral radius should be < 1 for contraction)
+- **`condition_number`**: Condition number of $I_{\text{obs}}$ (should be < $10^6$ for reliable inversion)
+- **`min_eigenvalue`**: Smallest eigenvalue of $I_{\text{obs}}$ (should be > 0 for positive definiteness)
+
+### Control Parameters
+
+SEM behavior can be controlled via `control$sem`:
+
+- **`h`**: Finite difference step size for computing $\mathbf{R}$ (default: $10^{-6}$)
+- **`ridge`**: Ridge parameter for numerical stability (default: uses `control$ridge`)
+
+### Advantages
+
+- **Fast:** ~10× faster than bootstrap (single set of finite differences vs. B full fits)
+- **Asymptotically valid:** Correct under regularity conditions
+- **Diagnostic rich:** Provides information about missing data fraction via $\mathbf{R}$
+- **No stochasticity:** Deterministic results (unlike bootstrap)
+
+### Limitations
+
+- **Experimental:** Less extensively validated than bootstrap for this specific model
+- **Asymptotic:** Requires large $\sum_k \nu_k$ for accuracy
+- **Numerical sensitivity:** Depends on quality of finite difference approximations
+- **May be unreliable:** When EM converges slowly (spectral radius of $\mathbf{R}$ near 1)
+
+### When to Use SEM
+
+**Use SEM when:**
+
+- Need faster SEs than bootstrap for routine reporting
+- Sample sizes are large ($\sum_k \nu_k > 100$)
+- Interested in diagnostic information about missing data impact
+- Exploring many model variations
+
+**Use Bootstrap instead when:**
+
+- Formal inference for publication
+- Small sample sizes
+- SEM diagnostics show numerical issues (large condition number, negative eigenvalues)
+- Weak overlap between samples
+
+### Example Usage
+
+```r
+# Fit with SEM standard errors
+fit_sem <- fit_covcomb(
+  S_list, nu,
+  se_method = "sem",
+  control = list(
+    sem = list(
+      h = 1e-6,      # Finite difference step
+      ridge = 1e-8   # Regularization
+    )
+  )
+)
+
+# Check diagnostics
+fit_sem$sem$condition_number  # Should be < 10^6
+fit_sem$sem$min_eigenvalue    # Should be > 0
+max(Mod(eigen(fit_sem$sem$R)$values))  # Spectral radius < 1
+
+# Extract SEs
+se_param <- fit_sem$Sigma_se  # Parameter scale
+```
+
+### References
+
+Meng, X. L., & Rubin, D. B. (1991). Using EM to obtain asymptotic variance-covariance matrices: The SEM algorithm. *Journal of the American Statistical Association*, 86(416), 899-909.
+
+Oakes, D. (1999). Direct calculation of the information matrix via the EM algorithm. *Journal of the Royal Statistical Society, Series B*, 61(2), 479-482.
+
+## Comparison: Plugin vs. Bootstrap vs. SEM
+
+| Criterion | Plugin | Bootstrap | SEM |
+|-----------|--------|-----------|-----|
+| **Speed** | Fast (~1 sec) | Slow (~2 min for B=200) | Moderate (~10 sec) |
+| **Accuracy** | Approximate | High | Moderate-High |
+| **Sample size** | Large $\nu_k$ | Any $\nu_k$ | Large $\sum_k \nu_k$ |
+| **Identifiability** | Explicit (returns NA) | Implicit (high SE) | Implicit (large SE) |
+| **Reproducibility** | Deterministic | Stochastic (use seed) | Deterministic |
+| **Missing data** | Ignores EM uncertainty | Full accounting | Full accounting |
+| **Diagnostics** | Coverage matrix | Success rate | Info matrices, $\mathbf{R}$ |
+| **Recommendation** | Exploration only | Gold standard | Fast alternative |
 
 # Implementation Details and Numerical Methods
 

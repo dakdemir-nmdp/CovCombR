@@ -53,7 +53,7 @@ This parameter is ignored when \code{scale_method = "none"}.}
 }}
 
 \item{se_method}{Standard error method: \code{"none"}, \code{"plugin"} (default),
-or \code{"bootstrap"}.}
+\code{"bootstrap"}, or \code{"sem"} (experimental).}
 }
 \value{
 Object of class \code{covcomb} containing:
@@ -68,13 +68,21 @@ Object of class \code{covcomb} containing:
 \item{S_hat_scale}{Scalar rescaling factor applied to Sigma_hat. Equals 1 when
   \code{scale_method = "none"} or \code{alpha_normalization = "geometric"}.}
 \item{alpha_hat}{Scale factors for each input sample. Equals 1 when \code{scale_method != "estimate"}.}
-\item{Sigma_se}{Standard error matrix on the per-df scale (if \code{se_method != "none"}). 
+\item{Sigma_se}{Standard error matrix on the per-df scale (if \code{se_method != "none"}).
   This provides standard errors for \code{Sigma_hat}.}
 \item{S_hat_se}{Standard error matrix on the data scale (if \code{se_method != "none"})}
 \item{bootstrap}{Bootstrap metadata (if \code{se_method = "bootstrap"})}
 \item{bootstrap_samples}{Bootstrap covariance estimates (if \code{retain_samples = TRUE})}
+\item{sem}{SEM diagnostics (if \code{se_method = "sem"}), including:
+  \itemize{
+    \item \code{I_obs}: Observed information matrix in log-Cholesky parameterization
+    \item \code{I_com}: Complete-data information matrix
+    \item \code{R}: EM rate matrix
+    \item \code{condition_number}: Condition number of observed information (for diagnostics)
+    \item \code{min_eigenvalue}: Smallest eigenvalue of observed information (for diagnostics)
+  }}
 \item{convergence}{Convergence information (status, iterations, final change)}
-\item{history}{Iteration history (relative change, log-likelihood)}
+\item{history}{Iteration history (relative change, log-likelihood with constant terms)}
 \item{call}{Matched call}
 }
 \description{
@@ -100,12 +108,23 @@ The EM algorithm iterates between:
         samples from the fitted model \code{B} times and refits the EM algorithm for
         each replicate. Accounts for both sampling variance and imputation uncertainty.
         \strong{Recommended for formal inference and hypothesis testing.}
+  \item \code{"sem"} (experimental): Supplemented EM method (Meng & Rubin, 1991) that
+        computes asymptotic standard errors using the observed information matrix.
+        Faster than bootstrap but may be less reliable for small samples or weak overlap.
+        Uses log-Cholesky parameterization and finite differences to estimate the EM
+        rate matrix. Returns diagnostic information (condition number, eigenvalues).
+        \strong{Use with caution and validate against bootstrap for critical applications.}
 }
 
 Built-in bootstrap SEs can be requested with \code{se_method = "bootstrap"}. The algorithm generates
 \code{B} synthetic datasets (default: 200) matching the original missing-pattern structure, refits the EM model for each
 replicate, and reports the empirical standard deviation of the resulting covariance estimates.
 Bootstrap behaviour can be customised through \code{control$bootstrap}; see the argument details.
+
+SEM standard errors can be requested with \code{se_method = "sem"}. This method is experimental
+and provides fast asymptotic approximations. Control parameters can be specified via
+\code{control$sem} with elements \code{h} (finite difference step, default 1e-6) and
+\code{ridge} (regularization, default uses \code{control$ridge}).
 }
 \examples{
 # Simulate incomplete sample covariance matrices

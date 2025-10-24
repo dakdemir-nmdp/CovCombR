@@ -93,12 +93,15 @@ test_that("Scale estimation works", {
 test_that("Plugin SE computation is correct", {
   sigma_test <- diag(3)
   sigma_test[1,2] <- sigma_test[2,1] <- 0.5
-  
-  se_result <- CovCombR:::.compute_se_plugin(sigma_test, 100)
-  
+
+  # Create coverage matrix (all entries observed with 100 df)
+  coverage_mat <- matrix(100, 3, 3)
+
+  se_result <- CovCombR:::compute_se_plugin(sigma_test, coverage_mat)
+
   se_11_expected <- sqrt((1*1 + 1^2) / 100)
-  se_12_expected <- sqrt((1*1 + 0.5^2) / 100)
-  
+  se_12_expected <- sqrt((0.5^2 + 1*1) / 100)
+
   expect_equal(se_result[1,1], se_11_expected, tolerance = 1e-10)
   expect_equal(se_result[1,2], se_12_expected, tolerance = 1e-10)
 })

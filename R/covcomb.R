@@ -145,7 +145,7 @@ fitted.covcomb <- function(object, ...) {
 #'       }
 #'   }
 #' @param se_method Standard error method: \code{"none"}, \code{"plugin"} (default),
-#'   or \code{"bootstrap"}.
+#'   \code{"bootstrap"}, or \code{"sem"} (experimental).
 #'
 #' @details
 #' The EM algorithm iterates between:
@@ -166,12 +166,23 @@ fitted.covcomb <- function(object, ...) {
 #'         samples from the fitted model \code{B} times and refits the EM algorithm for
 #'         each replicate. Accounts for both sampling variance and imputation uncertainty.
 #'         \strong{Recommended for formal inference and hypothesis testing.}
+#'   \item \code{"sem"} (experimental): Supplemented EM method (Meng & Rubin, 1991) that
+#'         computes asymptotic standard errors using the observed information matrix.
+#'         Faster than bootstrap but may be less reliable for small samples or weak overlap.
+#'         Uses log-Cholesky parameterization and finite differences to estimate the EM
+#'         rate matrix. Returns diagnostic information (condition number, eigenvalues).
+#'         \strong{Use with caution and validate against bootstrap for critical applications.}
 #' }
 #'
 #' Built-in bootstrap SEs can be requested with \code{se_method = "bootstrap"}. The algorithm generates
 #' \code{B} synthetic datasets (default: 200) matching the original missing-pattern structure, refits the EM model for each
 #' replicate, and reports the empirical standard deviation of the resulting covariance estimates.
 #' Bootstrap behaviour can be customised through \code{control$bootstrap}; see the argument details.
+#'
+#' SEM standard errors can be requested with \code{se_method = "sem"}. This method is experimental
+#' and provides fast asymptotic approximations. Control parameters can be specified via
+#' \code{control$sem} with elements \code{h} (finite difference step, default 1e-6) and
+#' \code{ridge} (regularization, default uses \code{control$ridge}).
 #'
 #' @return Object of class \code{covcomb} containing:
 #' \item{Sigma_hat}{Estimated combined covariance matrix. This is the primary output,
@@ -185,13 +196,21 @@ fitted.covcomb <- function(object, ...) {
 #' \item{S_hat_scale}{Scalar rescaling factor applied to Sigma_hat. Equals 1 when
 #'   \code{scale_method = "none"} or \code{alpha_normalization = "geometric"}.}
 #' \item{alpha_hat}{Scale factors for each input sample. Equals 1 when \code{scale_method != "estimate"}.}
-#' \item{Sigma_se}{Standard error matrix on the per-df scale (if \code{se_method != "none"}). 
+#' \item{Sigma_se}{Standard error matrix on the per-df scale (if \code{se_method != "none"}).
 #'   This provides standard errors for \code{Sigma_hat}.}
 #' \item{S_hat_se}{Standard error matrix on the data scale (if \code{se_method != "none"})}
 #' \item{bootstrap}{Bootstrap metadata (if \code{se_method = "bootstrap"})}
 #' \item{bootstrap_samples}{Bootstrap covariance estimates (if \code{retain_samples = TRUE})}
+#' \item{sem}{SEM diagnostics (if \code{se_method = "sem"}), including:
+#'   \itemize{
+#'     \item \code{I_obs}: Observed information matrix in log-Cholesky parameterization
+#'     \item \code{I_com}: Complete-data information matrix
+#'     \item \code{R}: EM rate matrix
+#'     \item \code{condition_number}: Condition number of observed information (for diagnostics)
+#'     \item \code{min_eigenvalue}: Smallest eigenvalue of observed information (for diagnostics)
+#'   }}
 #' \item{convergence}{Convergence information (status, iterations, final change)}
-#' \item{history}{Iteration history (relative change, log-likelihood)}
+#' \item{history}{Iteration history (relative change, log-likelihood with constant terms)}
 #' \item{call}{Matched call}
 #'
 #' @examples
@@ -259,7 +278,7 @@ fit_covcomb <- function(S_list, nu,
 
   scale_method <- match.arg(scale_method, c("none", "estimate"))
   alpha_normalization <- match.arg(alpha_normalization, c("geometric", "arithmetic"))
-  se_method <- match.arg(se_method, c("none", "plugin", "bootstrap"))
+  se_method <- match.arg(se_method, c("none", "plugin", "bootstrap", "sem"))
 
   # Validate inputs
   stopifnot(is.list(S_list), !is.null(names(S_list)))
@@ -421,17 +440,18 @@ fit_covcomb <- function(S_list, nu,
 
   # Compute standard errors
   if (se_method == "plugin") {
-    result$Sigma_se <- .compute_se_plugin(result$Sigma_hat, coverage_mat)
+    result$Sigma_se <- compute_se_plugin(result$Sigma_hat, coverage_mat)
     # Warn about plugin SE limitations
     message("Note: Plugin standard errors assume complete data and may underestimate ",
             "uncertainty for entries with substantial missing data. ",
             "They account for sampling variance but not EM imputation uncertainty. ",
             "For accurate inference, use se_method = 'bootstrap'.")
   } else if (se_method == "bootstrap") {
-    boot_res <- .compute_se_bootstrap(
+    boot_res <- compute_se_bootstrap(
       S_list = S_list,
       nu = nu,
       scale_method = scale_method,
+      alpha_normalization = alpha_normalization,
       init_sigma = init_sigma,
       control = control,
       bootstrap_ctrl = ctrl$bootstrap,
@@ -443,6 +463,33 @@ fit_covcomb <- function(S_list, nu,
     if (!is.null(boot_res$samples)) {
       result$bootstrap_samples <- boot_res$samples
     }
+  } else if (se_method == "sem") {
+    message("Note: SEM standard errors are experimental. ",
+            "They provide fast asymptotic approximations but may be unreliable ",
+            "for small samples or weak overlap. Bootstrap is recommended for formal inference.")
+
+    sem_ctrl <- if (!is.null(ctrl$sem)) ctrl$sem else list()
+    sem_h <- if (!is.null(sem_ctrl$h)) sem_ctrl$h else 1e-6
+    sem_ridge <- if (!is.null(sem_ctrl$ridge)) sem_ctrl$ridge else ctrl$ridge
+
+    sem_res <- compute_se_sem(
+      fit_result = result,
+      S_list = S_list,
+      nu = nu,
+      scale_method = scale_method,
+      alpha_normalization = alpha_normalization,
+      h = sem_h,
+      ridge = sem_ridge
+    )
+
+    result$Sigma_se <- sem_res$Sigma_se
+    result$sem <- list(
+      I_obs = sem_res$I_obs,
+      I_com = sem_res$I_com,
+      R = sem_res$R,
+      condition_number = sem_res$condition_number,
+      min_eigenvalue = sem_res$min_eigenvalue
+    )
   }
 
   if (!is.null(result$Sigma_se)) {
@@ -457,13 +504,20 @@ fit_covcomb <- function(S_list, nu,
 # -- Helper Functions for Numerical Stability --------------------------------
 
 #' Safe Cholesky Decomposition and Inversion
-#' 
+#'
 #' @param A Matrix to invert via Cholesky
 #' @param ridge Initial ridge value for regularization
 #' @param max_attempts Maximum number of ridge increase attempts
-#' @return Inverse of A computed as chol2inv(chol(A + ridge*I))
+#' @param return_chol Logical; if TRUE, return a list with both inverse and Cholesky factor
+#' @return If return_chol=FALSE (default), returns the inverse of A.
+#'   If return_chol=TRUE, returns a list with components:
+#'   \itemize{
+#'     \item inverse: Inverse of A computed as chol2inv(chol(A + ridge*I))
+#'     \item chol: Upper triangular Cholesky factor
+#'     \item ridge_used: Final ridge value applied
+#'   }
 #' @keywords internal
-.safe_chol_inverse <- function(A, ridge = 1e-8, max_attempts = 5) {
+.safe_chol_inverse <- function(A, ridge = 1e-8, max_attempts = 5, return_chol = FALSE) {
   p <- nrow(A)
   ridge_current <- ridge
 
@@ -473,7 +527,12 @@ fit_covcomb <- function(S_list, nu,
       error = function(e) NULL
     )
     if (!is.null(chol_try)) {
-      return(chol2inv(chol_try))
+      inv <- chol2inv(chol_try)
+      if (return_chol) {
+        return(list(inverse = inv, chol = chol_try, ridge_used = ridge_current))
+      } else {
+        return(inv)
+      }
     }
     if (attempt < max_attempts) {
       ridge_current <- ridge_current * 10
@@ -508,7 +567,7 @@ fit_covcomb <- function(S_list, nu,
 
     list(
       id = id,
-      S_k = W_k,  # Store Wishart matrix for internal EM algorithm
+      W_k = W_k,  # Store Wishart matrix for internal EM algorithm
       O_k = id_map[rownames(S_k_samp)],
       M_k = setdiff(1:p, id_map[rownames(S_k_samp)]),
       nu = nu_k,
@@ -536,9 +595,9 @@ fit_covcomb <- function(S_list, nu,
 
     for (s in internal_data$samples) {
       idx <- s$O_k
-      # s$S_k is already a Wishart matrix (nu * sample_cov)
+      # s$W_k is the Wishart matrix (nu * sample_cov)
       # Divide by nu to get back to sample covariance scale for initialization
-      S_k_unname <- unname(s$S_k) / s$nu
+      S_k_unname <- unname(s$W_k) / s$nu
       sum_mat[idx, idx] <- sum_mat[idx, idx] + S_k_unname
       count_mat[idx, idx] <- count_mat[idx, idx] + 1
     }
@@ -585,7 +644,7 @@ fit_covcomb <- function(S_list, nu,
   p <- nrow(sigma)
   O_k <- s$O_k
   M_k <- s$M_k
-  S_k <- s$S_k
+  W_k <- s$W_k  # Wishart matrix for observed block
   nu_k <- s$nu
   if (is.null(nu_k) || !is.finite(nu_k)) {
     stop("Sample information must include a finite 'nu' value.", call. = FALSE)
@@ -596,7 +655,7 @@ fit_covcomb <- function(S_list, nu,
 
   if (mk == 0L) {
     W_tilde <- matrix(0, p, p)
-    W_tilde[O_k, O_k] <- S_k
+    W_tilde[O_k, O_k] <- W_k
     return(.symmetrize(W_tilde))
   }
 
@@ -622,9 +681,9 @@ fit_covcomb <- function(S_list, nu,
     ), call. = FALSE)
   }
 
-  E_W_OO <- S_k
-  E_W_MO <- B_k %*% S_k
-  E_W_MM <- (nu_k - p_O) * alpha_k * Delta_k + B_k %*% S_k %*% t(B_k)
+  E_W_OO <- W_k
+  E_W_MO <- B_k %*% W_k
+  E_W_MM <- (nu_k - p_O) * alpha_k * Delta_k + B_k %*% W_k %*% t(B_k)
 
   W_tilde <- matrix(0, p, p)
   W_tilde[O_k, O_k] <- E_W_OO
@@ -654,9 +713,11 @@ fit_covcomb <- function(S_list, nu,
       }))
       sigma_candidate <- w_sum_inner / nu_total
 
-      sigma_candidate_sym <- .symmetrize(sigma_candidate)
+      # Symmetrize to correct numerical errors from floating-point arithmetic
+      # (w_tilde matrices are already symmetric from E-step, but accumulation may introduce asymmetry)
+      sigma_candidate <- .symmetrize(sigma_candidate)
       # Use safe inversion with progressive ridge regularization
-      sigma_inv <- .safe_chol_inverse(sigma_candidate_sym, ridge = ridge)
+      sigma_inv <- .safe_chol_inverse(sigma_candidate, ridge = ridge)
 
       # Alpha MLE formula (with gamma=1 fixed)
       # Formula: alpha_k = tr(Sigma^{-1} W) / (nu_k * p)
@@ -717,40 +778,41 @@ fit_covcomb <- function(S_list, nu,
 
 .compute_loglik <- function(sigma, internal_data) {
   loglik <- sum(sapply(internal_data$samples, function(s) {
-    S_k <- s$S_k
+    W_k <- s$W_k  # Wishart matrix for observed block
     O_k <- s$O_k
     nu_k <- s$nu
     pk <- length(O_k)
     alpha_k <- s$alpha_k
-    
+
     Sigma_OO <- sigma[O_k, O_k, drop = FALSE]
     Sigma_OO_sym <- .symmetrize(Sigma_OO)
     # Use safe inversion with progressive ridge regularization
-    Sigma_OO_inv <- .safe_chol_inverse(Sigma_OO_sym, ridge = 1e-10)
-    chol_Sigma <- chol(Sigma_OO_sym + diag(1e-10, pk))
+    # Get both inverse and Cholesky factor to avoid redundant decomposition
+    chol_result <- .safe_chol_inverse(Sigma_OO_sym, ridge = 1e-10, return_chol = TRUE)
+    Sigma_OO_inv <- chol_result$inverse
+    chol_Sigma <- chol_result$chol
     log_det_Sigma <- 2 * sum(log(diag(chol_Sigma)))
-    
-    log_det_S <- determinant(S_k, logarithm = TRUE)$modulus
-    tr_term <- sum(diag(Sigma_OO_inv %*% S_k))
-    
-    0.5 * (nu_k - pk - 1) * as.numeric(log_det_S) -
+
+    log_det_W <- determinant(W_k, logarithm = TRUE)$modulus
+    tr_term <- sum(diag(Sigma_OO_inv %*% W_k))
+
+    # Wishart log-likelihood with constant terms
+    # Reference: Anderson (2003), Theorem 7.2.2
+    # log p(W | Sigma, nu) = const + (nu - p - 1)/2 * log|W| - nu/2 * log|Sigma| - 1/2 * tr(Sigma^{-1} W)
+    # where const = -nu*p/2 * log(2) - p(p-1)/4 * log(pi) - sum_{j=1}^p log Gamma((nu + 1 - j)/2)
+
+    # Compute constant terms
+    log_const <- -nu_k * pk / 2 * log(2) - pk * (pk - 1) / 4 * log(pi)
+    for (j in 1:pk) {
+      log_const <- log_const - lgamma((nu_k + 1 - j) / 2)
+    }
+
+    log_const +
+      0.5 * (nu_k - pk - 1) * as.numeric(log_det_W) -
       0.5 * nu_k * (pk * log(alpha_k) + log_det_Sigma) -
       0.5 * (tr_term / alpha_k)
   }))
   as.numeric(loglik)
-}
-
-.compute_se_plugin <- function(sigma_hat, coverage_mat) {
-  if (is.null(coverage_mat)) {
-    stop("Coverage matrix required for plugin SE computation.", call. = FALSE)
-  }
-  dim_names <- dimnames(sigma_hat)
-  variance_mat <- sigma_hat^2 + outer(diag(sigma_hat), diag(sigma_hat))
-  se_mat <- matrix(NA_real_, nrow = nrow(sigma_hat), ncol = ncol(sigma_hat))
-  positive <- coverage_mat > 0
-  se_mat[positive] <- sqrt(variance_mat[positive] / coverage_mat[positive])
-  if (!is.null(dim_names)) dimnames(se_mat) <- dim_names
-  se_mat
 }
 
 .compute_coverage <- function(internal_data) {
@@ -875,190 +937,6 @@ fit_covcomb <- function(S_list, nu,
     is_connected = (num_components == 1L),
     num_components = num_components,
     component_map = component_map
-  )
-}
-
-.compute_se_bootstrap <- function(S_list, nu, scale_method, init_sigma,
-                                  control, bootstrap_ctrl, Sigma_hat, alpha_hat) {
-  if (length(S_list) == 0L) {
-    stop("Bootstrap requires at least one sample.", call. = FALSE)
-  }
-  
-  if (is.null(bootstrap_ctrl)) bootstrap_ctrl <- list()
-  
-  B <- bootstrap_ctrl$B
-  if (is.null(B)) B <- 200
-  if (!is.numeric(B) || length(B) != 1L || is.na(B) || B < 1) {
-    stop("control$bootstrap$B must be a positive integer.", call. = FALSE)
-  }
-  B <- as.integer(round(B))
-  
-  seed <- bootstrap_ctrl$seed
-  if (!is.null(seed)) {
-    if (!is.numeric(seed) || length(seed) != 1L || is.na(seed)) {
-      stop("control$bootstrap$seed must be a single numeric value.", call. = FALSE)
-    }
-  }
-  
-  progress <- isTRUE(bootstrap_ctrl$progress)
-  verbose <- isTRUE(bootstrap_ctrl$verbose)
-  retain_samples <- isTRUE(bootstrap_ctrl$retain_samples)
-  
-  init_sigma_boot <- if (!is.null(bootstrap_ctrl$init_sigma)) {
-    bootstrap_ctrl$init_sigma
-  } else {
-    Sigma_hat
-  }
-  
-  control_boot <- control
-  if (!is.list(control_boot)) control_boot <- list()
-  if (is.list(control_boot)) control_boot$bootstrap <- NULL
-  
-  p <- nrow(Sigma_hat)
-  dim_names <- dimnames(Sigma_hat)
-  row_names <- if (!is.null(dim_names)) dim_names[[1]] else NULL
-  col_names <- if (!is.null(dim_names)) dim_names[[2]] else NULL
-  sample_count <- length(S_list)
-  sample_names <- names(S_list)
-  if (is.null(sample_names)) {
-    sample_names <- as.character(seq_len(sample_count))
-    names(S_list) <- sample_names
-  }
-  if (is.null(names(nu))) {
-    names(nu) <- sample_names
-  }
-  nu <- nu[sample_names]
-  if (is.null(alpha_hat)) {
-    alpha_hat <- setNames(rep(1, sample_count), sample_names)
-  }
-  if (is.null(names(alpha_hat))) {
-    alpha_hat <- setNames(alpha_hat, sample_names)
-  }
-  alpha_hat <- alpha_hat[sample_names]
-  sample_info <- lapply(sample_names, function(id) {
-    S_k <- S_list[[id]]
-    if (is.null(rownames(S_k)) || is.null(colnames(S_k))) {
-      stop("Each covariance matrix in S_list must have row and column names.", call. = FALSE)
-    }
-    obs_vars <- rownames(S_k)
-    if (!setequal(obs_vars, colnames(S_k))) {
-      stop("Row and column names must match for each covariance matrix.", call. = FALSE)
-    }
-    nu_k <- nu[[id]]
-    if (is.null(nu_k) || is.na(nu_k)) {
-      stop(sprintf("Degrees of freedom missing for sample '%s'.", id), call. = FALSE)
-    }
-    list(id = id, vars = obs_vars, nu = nu_k)
-  })
-  
-  successes <- 0L
-  sigma_samples <- vector("list", B)
-  failed_indices <- integer(0)
-  
-  if (!is.null(seed)) {
-    has_old_seed <- exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
-    if (has_old_seed) {
-      old_seed <- get(".Random.seed", envir = .GlobalEnv, inherits = FALSE)
-    }
-    set.seed(seed)
-    on.exit({
-      if (has_old_seed) {
-        assign(".Random.seed", old_seed, envir = .GlobalEnv)
-      } else if (exists(".Random.seed", envir = .GlobalEnv, inherits = FALSE)) {
-        rm(list = ".Random.seed", envir = .GlobalEnv)
-      }
-    }, add = TRUE)
-  }
-  
-  show_progress <- progress && B > 1L
-  if (show_progress) {
-    pb <- utils::txtProgressBar(min = 0, max = B, style = 3)
-    on.exit(close(pb), add = TRUE)
-  }
-  
-  for (b in seq_len(B)) {
-    S_boot <- vector("list", sample_count)
-    names(S_boot) <- sample_names
-    for (k in seq_len(sample_count)) {
-      info <- sample_info[[k]]
-      vars <- info$vars
-      sigma_sub <- Sigma_hat[vars, vars, drop = FALSE]
-      alpha_k <- alpha_hat[[info$id]]
-      if (is.null(alpha_k) || is.na(alpha_k)) alpha_k <- 1
-      # Generate Wishart matrix
-      W_sim <- stats::rWishart(1, info$nu, alpha_k * sigma_sub)[,,1]
-      # Convert to sample covariance (to match input format)
-      sim_mat <- W_sim / info$nu
-      dimnames(sim_mat) <- list(vars, vars)
-      S_boot[[info$id]] <- sim_mat
-    }
-    nu_boot <- nu[sample_names]
-    
-    fit_boot <- tryCatch(
-      fit_covcomb(
-        S_list = S_boot,
-        nu = nu_boot,
-        scale_method = scale_method,
-        init_sigma = init_sigma_boot,
-        control = control_boot,
-        se_method = "none"
-      ),
-      error = function(e) {
-        if (verbose) {
-          message(sprintf("Bootstrap replicate %d failed: %s", b, e$message))
-        }
-        NULL
-      }
-    )
-    
-    if (is.null(fit_boot) || !isTRUE(fit_boot$convergence$converged)) {
-      failed_indices <- c(failed_indices, b)
-      if (!is.null(fit_boot) && verbose) {
-        message(sprintf(
-          "Bootstrap replicate %d did not converge (iterations: %d, final change: %.3e).",
-          b, fit_boot$convergence$iterations, fit_boot$convergence$final_rel_change
-        ))
-      }
-    } else {
-      successes <- successes + 1L
-      sigma_boot <- fit_boot$Sigma_hat
-      if (!is.null(row_names) && !is.null(col_names)) {
-        sigma_boot <- sigma_boot[row_names, col_names, drop = FALSE]
-      }
-      sigma_samples[[successes]] <- sigma_boot
-    }
-    
-    if (show_progress) utils::setTxtProgressBar(pb, b)
-  }
-  
-  if (successes == 0L) {
-    stop("All bootstrap replicates failed; cannot compute standard errors.", call. = FALSE)
-  }
-  
-  sigma_samples <- sigma_samples[seq_len(successes)]
-  sample_array <- array(NA_real_, dim = c(p, p, successes))
-  for (s in seq_len(successes)) {
-    sample_array[,,s] <- sigma_samples[[s]]
-  }
-  if (retain_samples) {
-    dimnames(sample_array) <- list(row_names, col_names, paste0("b", seq_len(successes)))
-  }
-  
-  sigma_se <- apply(sample_array, c(1, 2), stats::sd)
-  dimnames(sigma_se) <- dim_names
-  
-  meta <- list(
-    B = B,
-    successes = successes,
-    failures = B - successes,
-    failed_indices = if (length(failed_indices)) failed_indices else NULL,
-    seed = seed
-  )
-  
-  list(
-    Sigma_se = sigma_se,
-    samples = if (retain_samples) sample_array else NULL,
-    meta = meta
   )
 }
 

@@ -4,7 +4,7 @@
 \alias{.safe_chol_inverse}
 \title{Safe Cholesky Decomposition and Inversion}
 \usage{
-.safe_chol_inverse(A, ridge = 1e-08, max_attempts = 5)
+.safe_chol_inverse(A, ridge = 1e-08, max_attempts = 5, return_chol = FALSE)
 }
 \arguments{
 \item{A}{Matrix to invert via Cholesky}
@@ -12,9 +12,17 @@
 \item{ridge}{Initial ridge value for regularization}
 
 \item{max_attempts}{Maximum number of ridge increase attempts}
+
+\item{return_chol}{Logical; if TRUE, return a list with both inverse and Cholesky factor}
 }
 \value{
-Inverse of A computed as chol2inv(chol(A + ridge*I))
+If return_chol=FALSE (default), returns the inverse of A.
+  If return_chol=TRUE, returns a list with components:
+  \itemize{
+    \item inverse: Inverse of A computed as chol2inv(chol(A + ridge*I))
+    \item chol: Upper triangular Cholesky factor
+    \item ridge_used: Final ridge value applied
+  }
 }
 \description{
 Safe Cholesky Decomposition and Inversion

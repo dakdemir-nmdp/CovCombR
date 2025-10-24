@@ -28,6 +28,7 @@ Wiley Series in Probability and Statistics.
 Useful links:
 \itemize{
   \item \url{https://github.com/dakdemir-nmdp/CovCombR}
+  \item \url{https://dakdemir-nmdp.github.io/CovCombR/}
   \item Report bugs at \url{https://github.com/dakdemir-nmdp/CovCombR/issues}
 }
 

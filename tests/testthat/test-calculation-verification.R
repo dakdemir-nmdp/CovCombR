@@ -268,19 +268,27 @@ test_that("Log-likelihood formula includes all terms", {
   )
   
   # Manual log-likelihood calculation (Wishart distribution for W = nu*S)
-  # log L = (nu-p-1)/2 * log|W| - nu/2 * log|Sigma| - 1/2 * tr(Sigma^{-1} * W)
+  # log L = const + (nu-p-1)/2 * log|W| - nu/2 * log|Sigma| - 1/2 * tr(Sigma^{-1} * W)
+  # where const = -nu*p/2 * log(2) - p(p-1)/4 * log(pi) - sum_j lgamma((nu+1-j)/2)
   log_det_W <- determinant(W, logarithm = TRUE)$modulus
   log_det_Sigma <- determinant(fit$Sigma_hat, logarithm = TRUE)$modulus
   tr_term <- sum(diag(solve(fit$Sigma_hat, W)))
 
-  loglik_manual <- 0.5 * (nu - p - 1) * log_det_W -
+  # Compute constant terms (now included in the implementation)
+  log_const <- -nu * p / 2 * log(2) - p * (p - 1) / 4 * log(pi)
+  for (j in 1:p) {
+    log_const <- log_const - lgamma((nu + 1 - j) / 2)
+  }
+
+  loglik_manual <- log_const +
+                   0.5 * (nu - p - 1) * log_det_W -
                    0.5 * nu * log_det_Sigma -
                    0.5 * tr_term
-  
+
   loglik_from_fit <- fit$history$log_likelihood[nrow(fit$history)]
-  
-  # Should match (up to constants)
-  expect_equal(as.numeric(loglik_manual), as.numeric(loglik_from_fit), tolerance = 0.1)
+
+  # Should match exactly (including constants)
+  expect_equal(as.numeric(loglik_manual), as.numeric(loglik_from_fit), tolerance = 1e-6)
 })
 
 test_that("Frobenius norm convergence check is correct", {
@@ -362,12 +370,13 @@ test_that("Standard error formula components are correct", {
   ), 3, 3)
   
   nu_total <- 100
-  
+
   # Manual calculation for element (1,2)
   se_12_manual <- sqrt((Sigma_hat[1,1] * Sigma_hat[2,2] + Sigma_hat[1,2]^2) / nu_total)
-  
-  # Via function
-  SE_mat <- CovCombR:::.compute_se_plugin(Sigma_hat, nu_total)
+
+  # Via function (coverage_mat should be a matrix)
+  coverage_mat <- matrix(nu_total, nrow(Sigma_hat), ncol(Sigma_hat))
+  SE_mat <- CovCombR:::compute_se_plugin(Sigma_hat, coverage_mat)
   
   expect_equal(SE_mat[1,2], se_12_manual, tolerance = 1e-14)
   
