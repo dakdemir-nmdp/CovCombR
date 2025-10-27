@@ -111,7 +111,7 @@ S_hat_se <- fit$S_hat_se
 fit <- fit_covcomb(
   S_list,                  # List of covariance/Wishart matrices
   nu,                      # Degrees of freedom vector
-  init_sigma = "eigendecomp",
+  init_sigma = "avg_padded",
   se_method = "plugin",
   control = list(
     max_iter = 1000,
@@ -154,24 +154,37 @@ fit <- fit_covcomb(
 - `"arithmetic"`: Constrains arithmetic mean of $\alpha_k$ to 1
   - Alternative normalization scheme
 
-**`init_sigma`** (optional, character, default: `"eigendecomp"`)
-- `"eigendecomp"`: Initialize from eigendecomposition of stitched matrix
-  - Most stable, recommended for most applications
+**`init_sigma`** (optional, character, default: `"identity"`)
 - `"identity"`: Start with identity matrix
-  - Faster but may require more iterations
+  - Fast and stable, recommended default
+  - May require slightly more iterations than avg_padded
+- `"avg_padded"`: Initialize from average of observed entries, padding unobserved entries
+  - More sophisticated initialization using observed data
+  - May converge faster but requires more setup time
 - Numeric matrix: Provide custom initialization
 
 **`se_method`** (optional, character, default: `"plugin"`)
 - `"none"`: No standard error computation (fastest)
 - `"plugin"`: Fisher information-based standard errors (fast, may underestimate)
 - `"bootstrap"`: Parametric bootstrap standard errors (slower, more reliable)
-  - Additional arguments: `boot_samples` (default: 100)
+  - Configure via `control$bootstrap$B` (default: 200)
+- `"sem"`: Supplemented EM standard errors (experimental, faster than bootstrap)
+  - Configure via `control$sem$h` and `control$sem$ridge`
 
 **`control`** (optional, list of parameters)
-- `max_iter`: Maximum EM iterations (default: 1000)
+- `max_iter`: Maximum EM iterations (default: 500)
 - `tol`: Convergence tolerance for relative change (default: 1e-7)
 - `ridge`: Ridge regularization for Cholesky stability (default: 1e-8)
 - `min_eigen`: Minimum eigenvalue floor (default: 1e-10)
+- `bootstrap`: List controlling bootstrap SE computation (when `se_method = "bootstrap"`):
+  - `B`: Number of bootstrap replicates (default: 200)
+  - `seed`: Optional RNG seed for reproducibility
+  - `progress`: Show progress updates (default: FALSE)
+  - `verbose`: Print messages for failed replicates (default: FALSE)
+  - `retain_samples`: Keep bootstrap sample array in result (default: FALSE)
+- `sem`: List controlling SEM SE computation (when `se_method = "sem"`):
+  - `h`: Finite difference step size for computing EM rate matrix (default: 1e-6)
+  - `ridge`: Ridge parameter for numerical stability (default: uses `control$ridge`)
 
 #### Return Value: Fitted Object
 
@@ -319,6 +332,14 @@ CovCombR provides estimates on **two related scales**:
 - Recommended for publication and inference
 - Slower but more reliable (especially for small samples)
 
+**SEM Standard Errors** (`se_method = "sem"`, experimental):
+- Supplemented EM method (Meng & Rubin, 1991)
+- Asymptotic approximation using observed information matrix
+- Faster than bootstrap but experimental
+- May be unreliable for small samples or weak overlap
+- Returns diagnostic information (condition number, eigenvalues)
+- Use with caution and validate against bootstrap
+
 Access results:
 ```r
 Sigma_se <- fit$Sigma_se        # SE on parameter scale
@@ -327,6 +348,12 @@ S_hat_se <- fit$S_hat_se        # SE on data scale
 # Compute 95% confidence intervals
 lower_95 <- coef(fit) - 1.96 * fit$Sigma_se
 upper_95 <- coef(fit) + 1.96 * fit$Sigma_se
+
+# Access SEM diagnostics (when using se_method = "sem")
+if (!is.null(fit$sem)) {
+  cat("Condition number:", fit$sem$condition_number, "\n")
+  cat("Min eigenvalue:", fit$sem$min_eigenvalue, "\n")
+}
 ```
 
 ## Example Workflows
@@ -632,8 +659,8 @@ fit <- fit_covcomb(S_list, nu, se_method = "none")
 fit <- fit_covcomb(S_list, nu, se_method = "plugin")
 
 # 3. Reduce bootstrap samples if memory-limited
-fit <- fit_covcomb(S_list, nu, se_method = "bootstrap", 
-                      boot_samples = 50)
+fit <- fit_covcomb(S_list, nu, se_method = "bootstrap",
+                      control = list(bootstrap = list(B = 50)))
 
 # 4. Increase ridge regularization
 fit <- fit_covcomb(S_list, nu, se_method = "bootstrap",
@@ -681,7 +708,7 @@ fit <- fit_covcomb(S_list, nu, se_method = "bootstrap",
 - **Per-iteration cost:** $O(Kp^3)$ dominated by matrix inversions
 - **Total cost:** $\approx$ iterations $\times K \times p^3$
 - Typical convergence: 20-50 iterations for well-conditioned problems
-- With bootstrap: Multiply by `boot_samples` factor
+- With bootstrap: Multiply by number of bootstrap replicates (default: 200)
 
 ## Contributing
 

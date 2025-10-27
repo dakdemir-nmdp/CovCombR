@@ -143,6 +143,11 @@ fitted.covcomb <- function(object, ...) {
 #'         \item \code{retain_samples}: Logical; keep the bootstrap sample array in the result when \code{TRUE}
 #'         \item \code{init_sigma}: Initialization passed to bootstrap fits (defaults to the converged \code{Sigma_hat})
 #'       }
+#'     \item \code{sem}: Optional list controlling SEM SE computation with elements:
+#'       \itemize{
+#'         \item \code{h}: Finite difference step size for computing EM rate matrix (default: 1e-6)
+#'         \item \code{ridge}: Ridge parameter for numerical stability (default: uses \code{control$ridge})
+#'       }
 #'   }
 #' @param se_method Standard error method: \code{"none"}, \code{"plugin"} (default),
 #'   \code{"bootstrap"}, or \code{"sem"} (experimental).
