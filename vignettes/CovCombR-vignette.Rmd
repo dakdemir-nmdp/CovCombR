@@ -28,6 +28,7 @@ library(CovCombR)
 library(ggplot2)
 library(dplyr)
 library(tibble)
+library(tidyr)
 ```
 
 # CovCombR in One Example
@@ -147,44 +148,30 @@ In this example, the estimated global scale is $\hat{\gamma} =$ `r sprintf("%.4f
 ## Visual Comparison: True vs. Naive vs. CovCombR
 
 ```{r comparison-plot, fig.height=3, fig.width=6, dpi=300, fig.alt="Heatmaps comparing true, naive, and CovCombR covariance estimates across variables."}
-matrix_to_long <- function(mat, label) {
-  mat <- as.matrix(mat)
-  nr <- nrow(mat)
-  nc <- ncol(mat)
-  row_nm <- rownames(mat)
-  col_nm <- colnames(mat)
-  if (is.null(row_nm)) row_nm <- paste0("Row", seq_len(nr))
-  if (is.null(col_nm)) col_nm <- paste0("Col", seq_len(nc))
-  grid <- expand.grid(
-    row_idx = seq_len(nr),
-    col_idx = seq_len(nc),
-    KEEP.OUT.ATTRS = FALSE,
-    stringsAsFactors = FALSE
-  )
-  grid$row <- row_nm[grid$row_idx]
-  grid$col <- col_nm[grid$col_idx]
-  grid$value <- mat[cbind(grid$row_idx, grid$col_idx)]
-  grid$matrix <- label
-  grid[, c("row", "col", "value", "matrix"), drop = FALSE]
+# Helper to reshape matrices for plotting
+get_plot_data <- function(mat, label) {
+  as.data.frame(mat) |>
+    rownames_to_column("row") |>
+    tidyr::pivot_longer(-row, names_to = "col", values_to = "value") |>
+    mutate(matrix = label)
 }
 
 plot_data <- bind_rows(
-  matrix_to_long(true_cov, "True"),
-  matrix_to_long(naive_cov, "Naive"),
-  matrix_to_long(em_cov, "CovCombR")
+  get_plot_data(true_cov, "True"),
+  get_plot_data(naive_cov, "Naive"),
+  get_plot_data(em_cov, "CovCombR")
 )
 
+# Factor ordering
 plot_data$row <- factor(plot_data$row, levels = rev(var_names))
 plot_data$col <- factor(plot_data$col, levels = var_names)
 plot_data$matrix <- factor(plot_data$matrix, levels = c("True", "Naive", "CovCombR"))
-plot_data <- plot_data |> mutate(label = ifelse(is.na(value), "", sprintf("%.2f", value)))
-
-value_limits <- range(plot_data$value, na.rm = TRUE)
 
 ggplot(plot_data, aes(x = col, y = row, fill = value)) +
   geom_tile(color = "white", linewidth = 0.2) +
-  geom_text(aes(label = label), color = "black", size = 2.5, na.rm = TRUE) +
-  scale_fill_gradient2(limits = value_limits, midpoint = 0, na.value = "#2F2F2F",
+  geom_text(aes(label = ifelse(is.na(value), "", sprintf("%.2f", value))), 
+            size = 2.5, na.rm = TRUE) +
+  scale_fill_gradient2(midpoint = 0, na.value = "#2F2F2F",
                        low = "#2166AC", high = "#B2182B", mid = "#F7F7F7",
                        name = "Covariance") +
   facet_wrap(~matrix, nrow = 1) +
@@ -193,13 +180,10 @@ ggplot(plot_data, aes(x = col, y = row, fill = value)) +
   theme_minimal(base_size = 8) + 
   theme(panel.grid = element_blank(),
         strip.text = element_text(face = "bold", size = 10), 
-        axis.text = element_text(size = 7),
         axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "bottom")
-
-  
 ```
-
+  
 CovCombR reconstructs the full block pattern, while the naive stitch lacks estimates for any variable pair never observed together (grey tiles).
 
 ## Correlation Comparison
@@ -209,6 +193,7 @@ CovCombR reconstructs the full block pattern, while the naive stitch lacks estim
 true_corr <- cov2cor(true_cov)
 em_corr <- cov2cor(em_cov)
 naive_corr <- naive_cov
+# Calculate naive correlations where possible
 for (i in 1:p) {
   for (j in 1:p) {
     if (!is.na(naive_cov[i,i]) && !is.na(naive_cov[j,j]) && !is.na(naive_cov[i,j])) {
@@ -218,22 +203,20 @@ for (i in 1:p) {
 }
 
 corr_plot_data <- bind_rows(
-  matrix_to_long(true_corr, "True"),
-  matrix_to_long(naive_corr, "Naive"),
-  matrix_to_long(em_corr, "CovCombR")
+  get_plot_data(true_corr, "True"),
+  get_plot_data(naive_corr, "Naive"),
+  get_plot_data(em_corr, "CovCombR")
 )
 
 corr_plot_data$row <- factor(corr_plot_data$row, levels = rev(var_names))
 corr_plot_data$col <- factor(corr_plot_data$col, levels = var_names)
 corr_plot_data$matrix <- factor(corr_plot_data$matrix, levels = c("True", "Naive", "CovCombR"))
-corr_plot_data <- corr_plot_data |> mutate(label = ifelse(is.na(value), "", sprintf("%.2f", value)))
-
-corr_value_limits <- range(corr_plot_data$value, na.rm = TRUE)
 
 ggplot(corr_plot_data, aes(x = col, y = row, fill = value)) +
   geom_tile(color = "white", linewidth = 0.2) +
-  geom_text(aes(label = label), color = "black", size = 2.5, na.rm = TRUE) +
-  scale_fill_gradient2(limits = corr_value_limits, midpoint = 0, na.value = "#2F2F2F",
+  geom_text(aes(label = ifelse(is.na(value), "", sprintf("%.2f", value))), 
+            size = 2.5, na.rm = TRUE) +
+  scale_fill_gradient2(midpoint = 0, na.value = "#2F2F2F",
                        low = "#2166AC", high = "#B2182B", mid = "#F7F7F7",
                        name = "Correlation") +
   facet_wrap(~matrix, nrow = 1) +
@@ -242,7 +225,6 @@ ggplot(corr_plot_data, aes(x = col, y = row, fill = value)) +
   theme_minimal(base_size = 8) + 
   theme(panel.grid = element_blank(),
         strip.text = element_text(face = "bold", size = 10), 
-        axis.text = element_text(size = 7),
         axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "bottom")
 ```

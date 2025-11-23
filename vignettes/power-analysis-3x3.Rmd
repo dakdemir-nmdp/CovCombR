@@ -276,7 +276,7 @@ print(test_data$Study2)
 #' @param verbose Print progress
 #' @return List with power, type I error, bias, coverage, and raw estimates
 simulate_one_scenario <- function(rho_13_true, nu_1, nu_2, se_method = "plugin",
-                                   M = 1000, B = 100, seed = 2025, verbose = FALSE) {
+                                  M = 1000, B = 100, seed = 2025, verbose = FALSE) {
   # Storage for results
   Sigma_hat_vec <- rep(NA, M)
   SE_hat_vec <- rep(NA, M)
@@ -426,7 +426,7 @@ library(tidyverse)
 # Note: Only nu ∈ {30, 50} work reliably; larger sizes fail due to ill-conditioning
 design <- expand_grid(
   rho_13_true = c(0.0, 0.3, 0.5),
-  nu = c(30, 50),  # Only these sizes work reliably
+  nu = c(30, 50), # Only these sizes work reliably
   se_method = "bootstrap"
 )
 
@@ -443,7 +443,7 @@ cat("\nNote: Using nu ∈ {30, 50} only - larger sizes fail due to matrix ill-co
 
 ```{r run_simulation, eval = FALSE}
 # Set parameters
-M <- 50  # Number of Monte Carlo replicates (use 500+ for publication)
+M <- 50 # Number of Monte Carlo replicates (use 500+ for publication)
 seed <- 2025
 
 # Storage
@@ -457,8 +457,10 @@ for (i in 1:nrow(design)) {
   scenario <- design[i, ]
 
   cat(sprintf("\n=== Scenario %d/%d ===\n", i, nrow(design)))
-  cat(sprintf("  rho_13 = %.2f, nu = %d, SE method = %s\n",
-              scenario$rho_13_true, scenario$nu, scenario$se_method))
+  cat(sprintf(
+    "  rho_13 = %.2f, nu = %d, SE method = %s\n",
+    scenario$rho_13_true, scenario$nu, scenario$se_method
+  ))
 
   scenario_result <- simulate_one_scenario(
     rho_13_true = scenario$rho_13_true,
@@ -466,7 +468,7 @@ for (i in 1:nrow(design)) {
     nu_2 = scenario$nu,
     se_method = scenario$se_method,
     M = M,
-    B = 50,  # Only used if se_method = "bootstrap"
+    B = 50, # Only used if se_method = "bootstrap"
     seed = seed + i * 10000,
     verbose = TRUE
   )
@@ -488,8 +490,10 @@ for (i in 1:nrow(design)) {
   # Progress update
   elapsed <- as.numeric(difftime(Sys.time(), start_time, units = "mins"))
   est_total <- elapsed / i * nrow(design)
-  cat(sprintf("  Progress: %.0f%% | Elapsed: %.1f min | Est. total: %.1f min\n",
-              100 * i / nrow(design), elapsed, est_total))
+  cat(sprintf(
+    "  Progress: %.0f%% | Elapsed: %.1f min | Est. total: %.1f min\n",
+    100 * i / nrow(design), elapsed, est_total
+  ))
 
   # Save intermediate results
   saveRDS(results, "power_analysis_results_intermediate.rds")
@@ -526,8 +530,10 @@ cat("This will take approximately 5-8 minutes...\n\n")
 for (i in 1:nrow(demo_design)) {
   scenario <- demo_design[i, ]
 
-  cat(sprintf("Scenario %d/%d: rho_13=%.1f, nu=%d\n",
-              i, nrow(demo_design), scenario$rho_13_true, scenario$nu))
+  cat(sprintf(
+    "Scenario %d/%d: rho_13=%.1f, nu=%d\n",
+    i, nrow(demo_design), scenario$rho_13_true, scenario$nu
+  ))
 
   # Run simulation
   scenario_result <- simulate_one_scenario(
@@ -535,8 +541,8 @@ for (i in 1:nrow(demo_design)) {
     nu_1 = scenario$nu,
     nu_2 = scenario$nu,
     se_method = "bootstrap",
-    M = 20,  # Moderate M for stable results
-    B = 30,  # Moderate B for valid SEs
+    M = 20, # Moderate M for stable results
+    B = 30, # Moderate B for valid SEs
     seed = 2025 + i * 10000,
     verbose = FALSE
   )
@@ -557,10 +563,14 @@ for (i in 1:nrow(demo_design)) {
 
 cat("\n\nResults summary:\n")
 print(results)
-cat(sprintf("\n\nTotal valid replicates: %d / %d\n",
-            sum(results$n_valid), nrow(demo_design) * 20))
-cat(sprintf("Converged fits: %d / %d\n",
-            sum(results$n_converged), nrow(demo_design) * 20))
+cat(sprintf(
+  "\n\nTotal valid replicates: %d / %d\n",
+  sum(results$n_valid), nrow(demo_design) * 20
+))
+cat(sprintf(
+  "Converged fits: %d / %d\n",
+  sum(results$n_converged), nrow(demo_design) * 20
+))
 ```
 
 ---
@@ -574,7 +584,8 @@ library(ggplot2)
 
 # Create factor for better legend
 results$nu_label <- factor(paste0("n = ", results$nu),
-                           levels = paste0("n = ", c(30, 50)))
+  levels = paste0("n = ", c(30, 50))
+)
 
 ggplot(results, aes(x = rho_13_true, y = power, color = nu_label, group = nu_label)) +
   geom_line(size = 1) +
@@ -637,36 +648,7 @@ knitr::kable(
 - The bootstrap method correctly accounts for imputation uncertainty, providing valid hypothesis tests
 - Note: Plugin SE would return `NA` for unobserved pairs and cannot be used for this test
 
-## Power Heatmap
 
-```{r power_heatmap, fig.width = 8, fig.height = 6}
-ggplot(results, aes(x = factor(rho_13_true), y = factor(nu), fill = power)) +
-  geom_tile(color = "white", size = 1) +
-  geom_text(aes(label = sprintf("%.2f", power)), color = "white", size = 4.5, fontface = "bold") +
-  scale_fill_gradient2(
-    low = "#FEE5D9", mid = "#6BAED6", high = "#08306B",
-    midpoint = 0.5, limits = c(0, 1),
-    name = "Power"
-  ) +
-  geom_hline(yintercept = 1.5, linetype = "dashed", color = "gray40", alpha = 0.5) +
-  geom_hline(yintercept = 2.5, linetype = "dashed", color = "gray40", alpha = 0.5) +
-  geom_hline(yintercept = 3.5, linetype = "dashed", color = "gray40", alpha = 0.5) +
-  labs(
-    title = "Power Landscape: Sample Size vs. Effect Size (Bootstrap)",
-    subtitle = "Testing unobserved correlation between variables never jointly measured",
-    x = "True Correlation (ρ₁₃)",
-    y = "Sample Size (ν = ν₁ = ν₂)",
-    caption = "Cells show empirical power from M=20 Monte Carlo replicates (B=30 bootstrap per fit)"
-  ) +
-  theme_minimal(base_size = 12) +
-  theme(
-    panel.grid = element_blank(),
-    legend.position = "right",
-    plot.title = element_text(face = "bold"),
-    plot.subtitle = element_text(size = 10),
-    plot.caption = element_text(hjust = 0, size = 9)
-  )
-```
 
 ### Sample Size Requirements
 
@@ -676,27 +658,31 @@ To achieve 80% power:
 # Interpolate sample size needed for 80% power
 # Note: This requires sufficient variation in power values
 power_80_samples <- results %>%
-  filter(rho_13_true > 0) %>%  # Only non-null effects
+  filter(rho_13_true > 0) %>% # Only non-null effects
   group_by(rho_13_true, se_method) %>%
   arrange(nu) %>%
   summarize(
-    nu_for_80pct_power = tryCatch({
-      # Check if we have enough data for interpolation
-      valid_power <- !is.na(power) & !is.nan(power)
-      if (sum(valid_power) >= 2) {
-        # Interpolate
-        interp_result <- approx(power[valid_power], nu[valid_power],
-                                xout = 0.80, rule = 2)$y
-        if (is.na(interp_result)) NA_real_ else interp_result
-      } else {
-        NA_real_
-      }
-    }, error = function(e) NA_real_),
+    nu_for_80pct_power = tryCatch(
+      {
+        # Check if we have enough data for interpolation
+        valid_power <- !is.na(power) & !is.nan(power)
+        if (sum(valid_power) >= 2) {
+          # Interpolate
+          interp_result <- approx(power[valid_power], nu[valid_power],
+            xout = 0.80, rule = 2
+          )$y
+          if (is.na(interp_result)) NA_real_ else interp_result
+        } else {
+          NA_real_
+        }
+      },
+      error = function(e) NA_real_
+    ),
     .groups = "drop"
   ) %>%
   pivot_wider(names_from = se_method, values_from = nu_for_80pct_power)
 
-if (nrow(power_80_samples) > 0 && any(!is.na(power_80_samples[,-1]))) {
+if (nrow(power_80_samples) > 0 && any(!is.na(power_80_samples[, -1]))) {
   knitr::kable(
     power_80_samples,
     digits = 0,

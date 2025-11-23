@@ -36,13 +36,17 @@ print.covcomb <- function(x, ...) {
   cat("Wishart EM Covariance Combination\n")
   cat("Call: ")
   print(x$call)
-  
+
   status <- if (x$convergence$converged) "converged" else "did not converge"
-  cat(sprintf("\nStatus: %s in %d iterations\n",
-              status, x$convergence$iterations))
+  cat(sprintf(
+    "\nStatus: %s in %d iterations\n",
+    status, x$convergence$iterations
+  ))
   cat(sprintf("Final relative change: %.2e\n", x$convergence$final_rel_change))
-  cat(sprintf("\nCombined covariance matrix (Sigma_hat): %d x %d\n",
-              nrow(x$Sigma_hat), ncol(x$Sigma_hat)))
+  cat(sprintf(
+    "\nCombined covariance matrix (Sigma_hat): %d x %d\n",
+    nrow(x$Sigma_hat), ncol(x$Sigma_hat)
+  ))
   cat(sprintf("  Mean diagonal: %.4f\n", mean(diag(x$Sigma_hat))))
   cat(sprintf("  Condition number: %.2e\n", kappa(x$Sigma_hat, exact = FALSE)))
   if (!is.null(x$Sigma_se)) {
@@ -57,7 +61,7 @@ print.covcomb <- function(x, ...) {
     cat("\nEstimated scale factors (alpha_hat):\n")
     print(round(sort(x$alpha_hat), 4))
   }
-  
+
   invisible(x)
 }
 
@@ -115,7 +119,8 @@ fitted.covcomb <- function(object, ...) {
 #'
 #' @param S_list Named list of sample covariance matrices (e.g., from \code{cov(X)}).
 #'   Each matrix is a principal submatrix with row/column names identifying observed variables.
-#' @param nu Named numeric vector of degrees of freedom (sample sizes) for each sample
+#' @param nu Named numeric vector of degrees of freedom (sample sizes) for each sample.
+#'   Must be at least the number of observed variables for each corresponding sample.
 #' @param scale_method Scaling method: \code{"none"} (default) or \code{"estimate"}
 #' @param alpha_normalization Normalization method for scale factors when
 #'   \code{scale_method = "estimate"}. Options:
@@ -230,27 +235,27 @@ fitted.covcomb <- function(object, ...) {
 #'
 #' # Generate 3 sample covariances with different missing patterns
 #' # Simulate from Wishart, then convert to sample covariances
-#' W1 <- stats::rWishart(1, 50, true_Sigma[1:5, 1:5])[,,1]
+#' W1 <- stats::rWishart(1, 50, true_Sigma[1:5, 1:5])[, , 1]
 #' S1 <- W1 / 50
 #' dimnames(S1) <- list(var_names[1:5], var_names[1:5])
 #'
-#' W2 <- stats::rWishart(1, 60, true_Sigma[3:8, 3:8])[,,1]
+#' W2 <- stats::rWishart(1, 60, true_Sigma[3:8, 3:8])[, , 1]
 #' S2 <- W2 / 60
 #' dimnames(S2) <- list(var_names[3:8], var_names[3:8])
 #'
-#' W3 <- stats::rWishart(1, 55, true_Sigma[c(1,3,5,7), c(1,3,5,7)])[,,1]
+#' W3 <- stats::rWishart(1, 55, true_Sigma[c(1, 3, 5, 7), c(1, 3, 5, 7)])[, , 1]
 #' S3 <- W3 / 55
-#' dimnames(S3) <- list(var_names[c(1,3,5,7)], var_names[c(1,3,5,7)])
+#' dimnames(S3) <- list(var_names[c(1, 3, 5, 7)], var_names[c(1, 3, 5, 7)])
 #'
 #' S_list <- list(sample1 = S1, sample2 = S2, sample3 = S3)
 #' nu <- c(sample1 = 50, sample2 = 60, sample3 = 55)
-#' 
+#'
 #' # Fit model
 #' fit <- fit_covcomb(S_list, nu, se_method = "plugin")
 #' print(fit)
-#' 
+#'
 #' # Extract combined covariance estimate (same scale as input sample covariances)
-#' Sigma_combined <- fit$Sigma_hat  # or coef(fit) or fit$S_hat
+#' Sigma_combined <- fit$Sigma_hat # or coef(fit) or fit$S_hat
 #'
 #' # The output is at the same scale as input sample covariances
 #' # Compare to true population covariance
@@ -270,15 +275,15 @@ fitted.covcomb <- function(object, ...) {
 #' # )
 #' # fit_boot$Sigma_se  # Bootstrap SEs on per-df scale
 
-#' 
+#'
 #' @export
 
 fit_covcomb <- function(S_list, nu,
-                           scale_method = "none",
-                           alpha_normalization = "geometric",
-                           init_sigma = "identity",
-                           control = list(),
-                           se_method = "plugin") {
+                        scale_method = "none",
+                        alpha_normalization = "geometric",
+                        init_sigma = "identity",
+                        control = list(),
+                        se_method = "plugin") {
   call <- match.call()
 
   scale_method <- match.arg(scale_method, c("none", "estimate"))
@@ -324,8 +329,10 @@ fit_covcomb <- function(S_list, nu,
   sigma_current <- .project_to_pd(sigma_current, ctrl$min_eigen)
 
   # EM loop
-  history <- data.frame(iteration = integer(), rel_change = numeric(),
-                        log_likelihood = numeric())
+  history <- data.frame(
+    iteration = integer(), rel_change = numeric(),
+    log_likelihood = numeric()
+  )
   converged <- FALSE
   rel_change <- NA_real_
   iterations_used <- 0L
@@ -401,27 +408,32 @@ fit_covcomb <- function(S_list, nu,
 
   if (K == 1) {
     warning("Only one sample provided. The model is not identifiable - ",
-            "unobserved variables will have arbitrary values. ",
-            "Consider providing multiple samples with overlapping variables.",
-            call. = FALSE)
+      "unobserved variables will have arbitrary values. ",
+      "Consider providing multiple samples with overlapping variables.",
+      call. = FALSE
+    )
   }
 
   if (cond_num > 1e6) {
     warning("Estimated covariance matrix is very ill-conditioned (condition number = ",
-            sprintf("%.2e", cond_num), "). ",
-            "This often indicates insufficient overlap between samples. ",
-            "Check that variable pairs are jointly observed in at least one sample.",
-            call. = FALSE)
+      sprintf("%.2e", cond_num), "). ",
+      "This often indicates insufficient overlap between samples. ",
+      "Check that variable pairs are jointly observed in at least one sample.",
+      call. = FALSE
+    )
   } else if (cond_num > 1e4) {
-    message("Note: Estimated covariance has high condition number (",
-            sprintf("%.2e", cond_num), "). ",
-            "Results may be sensitive to missing data patterns.")
+    message(
+      "Note: Estimated covariance has high condition number (",
+      sprintf("%.2e", cond_num), "). ",
+      "Results may be sensitive to missing data patterns."
+    )
   }
 
   if (min_eig < ctrl$min_eigen * 10) {
     warning("Smallest eigenvalue (", sprintf("%.2e", min_eig), ") is very close to the ",
-            "minimum threshold. This may indicate rank deficiency or poor identifiability.",
-            call. = FALSE)
+      "minimum threshold. This may indicate rank deficiency or poor identifiability.",
+      call. = FALSE
+    )
   }
 
   result <- list(
@@ -447,10 +459,12 @@ fit_covcomb <- function(S_list, nu,
   if (se_method == "plugin") {
     result$Sigma_se <- compute_se_plugin(result$Sigma_hat, coverage_mat)
     # Warn about plugin SE limitations
-    message("Note: Plugin standard errors assume complete data and may underestimate ",
-            "uncertainty for entries with substantial missing data. ",
-            "They account for sampling variance but not EM imputation uncertainty. ",
-            "For accurate inference, use se_method = 'bootstrap'.")
+    message(
+      "Note: Plugin standard errors assume complete data and may underestimate ",
+      "uncertainty for entries with substantial missing data. ",
+      "They account for sampling variance but not EM imputation uncertainty. ",
+      "For accurate inference, use se_method = 'bootstrap'."
+    )
   } else if (se_method == "bootstrap") {
     boot_res <- compute_se_bootstrap(
       S_list = S_list,
@@ -469,9 +483,11 @@ fit_covcomb <- function(S_list, nu,
       result$bootstrap_samples <- boot_res$samples
     }
   } else if (se_method == "sem") {
-    message("Note: SEM standard errors are experimental. ",
-            "They provide fast asymptotic approximations but may be unreliable ",
-            "for small samples or weak overlap. Bootstrap is recommended for formal inference.")
+    message(
+      "Note: SEM standard errors are experimental. ",
+      "They provide fast asymptotic approximations but may be unreliable ",
+      "for small samples or weak overlap. Bootstrap is recommended for formal inference."
+    )
 
     sem_ctrl <- if (!is.null(ctrl$sem)) ctrl$sem else list()
     sem_h <- if (!is.null(sem_ctrl$h)) sem_ctrl$h else 1e-6
@@ -572,7 +588,7 @@ fit_covcomb <- function(S_list, nu,
 
     list(
       id = id,
-      W_k = W_k,  # Store Wishart matrix for internal EM algorithm
+      W_k = W_k, # Store Wishart matrix for internal EM algorithm
       O_k = id_map[rownames(S_k_samp)],
       M_k = setdiff(1:p, id_map[rownames(S_k_samp)]),
       nu = nu_k,
@@ -580,21 +596,25 @@ fit_covcomb <- function(S_list, nu,
     )
   })
 
-  list(p = p, K = length(S_list), all_ids = all_ids, id_map = id_map,
-       samples = setNames(samples, sample_ids), scale_method = scale_method,
-       alpha_normalization = alpha_normalization)
+  list(
+    p = p, K = length(S_list), all_ids = all_ids, id_map = id_map,
+    samples = setNames(samples, sample_ids), scale_method = scale_method,
+    alpha_normalization = alpha_normalization
+  )
 }
 
 .initialize_sigma <- function(internal_data, method) {
   p <- internal_data$p
-  
+
   if (is.matrix(method)) {
     stopifnot(nrow(method) == p, ncol(method) == p)
     return(method)
   }
-  
-  if (method == "identity") return(diag(p))
-  
+
+  if (method == "identity") {
+    return(diag(p))
+  }
+
   if (method == "avg_padded") {
     sum_mat <- count_mat <- matrix(0, p, p)
 
@@ -608,24 +628,24 @@ fit_covcomb <- function(S_list, nu,
     }
 
     avg_mat <- sum_mat / pmax(count_mat, 1)
-    
+
     # Find a reasonable scale from the observed variances
     obs_vars <- diag(avg_mat)[diag(count_mat) > 0]
     mean_obs_var <- if (length(obs_vars) > 0) mean(obs_vars, na.rm = TRUE) else 1.0
-    
+
     # Create a full-rank "filler" matrix (scaled identity)
-    filler_mat <- diag(mean_obs_var, p) 
-    
+    filler_mat <- diag(mean_obs_var, p)
+
     # Find all entries (diag and off-diag) that were never observed
     unobs_idx <- which(count_mat == 0)
-    
+
     if (length(unobs_idx) > 0) {
       # Replace all zero-count entries with the filler values
       avg_mat[unobs_idx] <- filler_mat[unobs_idx]
     }
-    
+
     avg_mat <- .symmetrize(avg_mat)
-    
+
     # Check for unobserved variables and warn
     unobs <- which(diag(count_mat) == 0)
     if (length(unobs) > 0) {
@@ -637,11 +657,11 @@ fit_covcomb <- function(S_list, nu,
         call. = FALSE
       )
     }
-    
+
     dimnames(avg_mat) <- list(internal_data$all_ids, internal_data$all_ids)
     return(avg_mat)
   }
-  
+
   stop("Invalid initialization method")
 }
 
@@ -649,7 +669,7 @@ fit_covcomb <- function(S_list, nu,
   p <- nrow(sigma)
   O_k <- s$O_k
   M_k <- s$M_k
-  W_k <- s$W_k  # Wishart matrix for observed block
+  W_k <- s$W_k # Wishart matrix for observed block
   nu_k <- s$nu
   if (is.null(nu_k) || !is.finite(nu_k)) {
     stop("Sample information must include a finite 'nu' value.", call. = FALSE)
@@ -678,11 +698,11 @@ fit_covcomb <- function(S_list, nu,
   # Reference: Anderson (2003), Theorem 7.3.4
   p_O <- length(O_k)
 
-  # Validity check: conditional Wishart requires nu_k > p_O - 1
-  if (nu_k <= p_O - 1) {
+  # Validity check: conditional Wishart requires nu_k >= p_O
+  if (nu_k < p_O) {
     stop(sprintf(
-      "Sample degrees of freedom nu_k = %g must be > |O_k| - 1 = %d for conditional Wishart distribution to be defined. Sample has insufficient degrees of freedom.",
-      nu_k, p_O - 1
+      "Sample degrees of freedom nu_k = %g must be >= |O_k| = %d for conditional Wishart distribution to be defined. Sample has insufficient degrees of freedom.",
+      nu_k, p_O
     ), call. = FALSE)
   }
 
@@ -783,7 +803,7 @@ fit_covcomb <- function(S_list, nu,
 
 .compute_loglik <- function(sigma, internal_data) {
   loglik <- sum(sapply(internal_data$samples, function(s) {
-    W_k <- s$W_k  # Wishart matrix for observed block
+    W_k <- s$W_k # Wishart matrix for observed block
     O_k <- s$O_k
     nu_k <- s$nu
     pk <- length(O_k)
@@ -896,7 +916,7 @@ fit_covcomb <- function(S_list, nu,
 
   # Initialize BFS data structures
   num_components <- 0L
-  visited <- logical(p)  # All FALSE initially
+  visited <- logical(p) # All FALSE initially
   component_map <- integer(p)
 
   # Run BFS from each unvisited node
@@ -950,14 +970,16 @@ fit_covcomb <- function(S_list, nu,
 }
 
 .project_to_pd <- function(A, min_eigen = 1e-10) {
-  if (nrow(A) == 0 || ncol(A) == 0) return(A)
+  if (nrow(A) == 0 || ncol(A) == 0) {
+    return(A)
+  }
   A_sym <- .symmetrize(A)
-  dn <- dimnames(A_sym)  # Save dimnames before eigen decomposition
+  dn <- dimnames(A_sym) # Save dimnames before eigen decomposition
   eig <- eigen(A_sym, symmetric = TRUE)
   eig$values <- pmax(eig$values, min_eigen)
   # Fix: Use diag(x, nrow=length(x)) to handle 1x1 matrices correctly
   # R's diag(scalar) interprets scalar as dimension, not diagonal value
   A_pd <- eig$vectors %*% diag(eig$values, nrow = length(eig$values)) %*% t(eig$vectors)
-  if (!is.null(dn)) dimnames(A_pd) <- dn  # Restore dimnames
+  if (!is.null(dn)) dimnames(A_pd) <- dn # Restore dimnames
   A_pd
 }

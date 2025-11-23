@@ -160,38 +160,9 @@ print(round(rel_se, 3))
 Entries that were never jointly observed in any study have `NA` standard errors (infinite uncertainty from the plugin formula). For accurate inference on these entries, use bootstrap standard errors instead.
 
 ### Visualizing the Results
+ 
+We can directly compare the estimated covariance matrix with the full-data covariance matrix by inspecting the printed outputs above. The `CovCombR` estimate closely matches the full-data covariance, even for the off-diagonal elements that were not observed in some studies.
 
-```{r visualize, fig.width=8, fig.height=4, fig.alt="Side-by-side heatmaps comparing the CovCombR combined covariance with the full-data covariance for the iris example."}
-par(mfrow = c(1, 2))
-
-# Combined estimate
-# Plot using a grid where position (i,j) shows matrix element [i,j]
-image(1:4, 1:4, Sigma_combined,
-  xlab = "", ylab = "", main = "Combined Estimate",
-  xaxt = "n", yaxt = "n", col = hcl.colors(20, "Blue-Red 3")
-)
-axis(1, at = 1:4, labels = colnames(Sigma_combined), las = 2, cex.axis = 0.8)
-axis(2, at = 1:4, labels = rownames(Sigma_combined), las = 1, cex.axis = 0.8)
-for (i in 1:4) {
-  for (j in 1:4) {
-    text(j, i, sprintf("%.2f", Sigma_combined[i, j]), cex = 0.8)
-  }
-}
-
-# Full data covariance
-# Plot using a grid where position (i,j) shows matrix element [i,j]
-image(1:4, 1:4, Sigma_full,
-  xlab = "", ylab = "", main = "Full Data",
-  xaxt = "n", yaxt = "n", col = hcl.colors(20, "Blue-Red 3")
-)
-axis(1, at = 1:4, labels = colnames(Sigma_full), las = 2, cex.axis = 0.8)
-axis(2, at = 1:4, labels = rownames(Sigma_full), las = 1, cex.axis = 0.8)
-for (i in 1:4) {
-  for (j in 1:4) {
-    text(j, i, sprintf("%.2f", Sigma_full[i, j]), cex = 0.8)
-  }
-}
-```
 
 ### More Realistic Scenario: Different Sample Sizes
 
@@ -234,7 +205,8 @@ nu_boot <- c(Study1 = 24, Study2 = 29, Study3 = 19)
 
 set.seed(1234)
 fit_boot <- fit_covcomb(
-  CovList_boot, nu = nu_boot,
+  CovList_boot,
+  nu = nu_boot,
   se_method = "bootstrap",
   control = list(bootstrap = list(B = 100, seed = 1234, progress = FALSE, verbose = FALSE))
 )

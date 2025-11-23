@@ -28,6 +28,8 @@ library(ggplot2)
 library(dplyr)
 library(tidyr)
 library(gridExtra)
+# Suppress lint warnings for ggplot aesthetic variables
+utils::globalVariables(c("Col", "Row", "value_plot", "is_observed"))
 library(CovCombR)
 ```
 
@@ -69,273 +71,98 @@ where $\mathbf{Z}$ is the centered and scaled marker matrix.
 
 First, we create a realistic population structure by simulating a base relationship matrix with population substructure. We'll create 3 subpopulations with different levels of relatedness.
 
-```{r base-population}
-#set.seed(2025)
+```{r simulation-setup}
+# Simulation parameters
+n_total <- 1000 # Total genotypes
+n_markers_study <- 5000 # Total markers per study
+min_genotypes_per_study <- 200 # Minimum genotypes sampled per study
+max_genotypes_per_study <- 400 # Maximum genotypes sampled per study
+n_markers_per_study <- n_markers_study # Alias for inline code
+n_studies <- 10
 
-# Population parameters
-n_total <- 1000  # Total number of genotypes
-n_markers_base <- 50000  # Number of base markers for population structure
+# We'll generate a smaller set of base markers to save time/code for the vignette
+n_markers_base_sim <- 10000
+n_markers_total <- n_markers_base_sim # Alias for total markers used in inline code
 
-# Create population structure: 3 subpopulations
-subpop_sizes <- c(40, 35, 25)
+# Generate base population structure (3 subpopulations)
+subpop_sizes <- c(400, 350, 250) # Scaled up to sum to 1000
 subpop_labels <- rep(1:3, times = subpop_sizes)
 genotype_ids <- paste0("G", sprintf("%03d", 1:n_total))
 
-# Generate a realistic covariance structure for the base population
-# Higher correlation within subpopulations
-base_cor_within <- 0.6  # Within subpopulation correlation
-base_cor_between <- 0.1  # Between subpopulation correlation
-
-# Build correlation structure
-true_cor_matrix <- matrix(base_cor_between, n_total, n_total)
+# Generate true correlation matrix with block structure
+true_cor <- matrix(0.1, n_total, n_total)
 for (i in 1:3) {
   idx <- which(subpop_labels == i)
-  true_cor_matrix[idx, idx] <- base_cor_within
+  true_cor[idx, idx] <- 0.6
 }
-diag(true_cor_matrix) <- 1
+diag(true_cor) <- 1
+# Ensure PD
+eig <- eigen(true_cor, symmetric = TRUE)
+true_cor <- eig$vectors %*% diag(pmax(eig$values, 0.01)) %*% t(eig$vectors)
+true_cor <- cov2cor(true_cor)
+dimnames(true_cor) <- list(genotype_ids, genotype_ids)
 
-# Add some random variation to make it more realistic
-noise_matrix <- matrix(rnorm(n_total^2, 0, 0.05), n_total, n_total)
-noise_matrix <- (noise_matrix + t(noise_matrix)) / 2
-true_cor_matrix <- true_cor_matrix + noise_matrix
+# Generate marker data consistent with this structure
+L <- chol(true_cor)
+marker_mat <- matrix(0, n_total, n_markers_base_sim)
+marker_freqs <- runif(n_markers_base_sim, 0.1, 0.9)
 
-# Ensure positive definiteness
-eig <- eigen(true_cor_matrix, symmetric = TRUE)
-min_eig <- min(eig$values)
-if (min_eig < 0.01) {
-  true_cor_matrix <- eig$vectors %*% diag(pmax(eig$values, 0.01)) %*% t(eig$vectors)
-}
-
-# Standardize to correlation matrix
-true_cor_matrix <- cov2cor(true_cor_matrix)
-dimnames(true_cor_matrix) <- list(genotype_ids, genotype_ids)
-
-cat("Base population structure created:\n")
-cat(sprintf("  Total genotypes: %d\n", n_total))
-cat(sprintf("  Subpopulation sizes: %s\n", paste(subpop_sizes, collapse = ", ")))
-cat(sprintf("  Mean within-subpop correlation: %.3f\n",
-            mean(true_cor_matrix[subpop_labels == 1, subpop_labels == 1][
-              upper.tri(true_cor_matrix[subpop_labels == 1, subpop_labels == 1])])))
-cat(sprintf("  Mean between-subpop correlation: %.3f\n",
-            mean(true_cor_matrix[subpop_labels == 1, subpop_labels == 2])))
-```
-
-## Step 2: Helper Function for Van Raden GRM
-
-```{r vanraden-function}
-# Van Raden (2008) GRM calculation
-calculate_vanraden_grm <- function(marker_matrix, genotype_names = NULL) {
-  # marker_matrix: individuals x markers (0, 1, 2 coding)
-  # Returns: GRM scaled to average diagonal = 1
-
-  n <- nrow(marker_matrix)
-  p <- ncol(marker_matrix)
-
-  # Calculate allele frequencies
-  allele_freq <- colMeans(marker_matrix, na.rm = TRUE) / 2
-
-  # Center markers
-  P <- matrix(2 * allele_freq, nrow = n, ncol = p, byrow = TRUE)
-  Z <- marker_matrix - P
-
-  # Calculate GRM
-  ZZt <- tcrossprod(Z)
-
-  # Scale by trace/n to get average diagonal = 1
-  scaling_factor <- sum(diag(ZZt)) / n
-  G <- ZZt / scaling_factor
-
-  if (!is.null(genotype_names)) {
-    dimnames(G) <- list(genotype_names, genotype_names)
-  }
-
-  return(G)
-}
-```
-
-## Step 3: Generate Marker Data for Base Population
-
-```{r base-markers}
-# Generate base marker data that reflects the population structure
-# This represents the "true" genetic data for all individuals and all available markers
-# Sample GRMs will be calculated from subsets of these markers and individuals
-
-# Generate correlated genotypes using the Cholesky decomposition
-L <- chol(true_cor_matrix)
-n_markers_total <- 50000  # Total markers available in the population
-
-# For each marker, generate correlated values across individuals
-# Then threshold to get 0, 1, 2 genotypes
-marker_freqs_base <- runif(n_markers_total, 0.1, 0.9)
-marker_matrix_base <- matrix(0, n_total, n_markers_total)
-
-for (m in 1:n_markers_total) {
-  # Generate correlated normal values
-  z <- rnorm(n_total)
-  corr_z <- crossprod(L, z)
-
-  # Convert to genotypes using allele frequency
-  p <- marker_freqs_base[m]
-  # Thresholds for trinomial (0, 1, 2)
-  thresh1 <- qnorm((1-p)^2)
-  thresh2 <- qnorm((1-p)^2 + 2*p*(1-p))
-
-  marker_matrix_base[, m] <- ifelse(corr_z < thresh1, 0,
-                                     ifelse(corr_z < thresh2, 1, 2))
+# Helper for VanRaden GRM
+calc_grm <- function(M, ids = NULL) {
+  p <- colMeans(M) / 2
+  Z <- M - matrix(2 * p, nrow(M), ncol(M), byrow = TRUE)
+  G <- tcrossprod(Z) / (sum(diag(tcrossprod(Z))) / nrow(M))
+  if (!is.null(ids)) dimnames(G) <- list(ids, ids)
+  G
 }
 
-rownames(marker_matrix_base) <- genotype_ids
-colnames(marker_matrix_base) <- paste0("M", 1:n_markers_total)
+# Generate markers (simplified for vignette)
+# Using a subset of markers for speed in this example
+for (m in 1:n_markers_base_sim) {
+  z <- crossprod(L, rnorm(n_total))
+  p <- marker_freqs[m]
+  thresh1 <- qnorm((1 - p)^2)
+  thresh2 <- qnorm((1 - p)^2 + 2 * p * (1 - p))
+  marker_mat[, m] <- ifelse(z < thresh1, 0, ifelse(z < thresh2, 1, 2))
+}
+rownames(marker_mat) <- genotype_ids
+colnames(marker_mat) <- paste0("M", 1:n_markers_base_sim)
 
-# Calculate the "true" GRM from ALL markers and ALL individuals
-# This is the target we want to estimate
-true_grm <- calculate_vanraden_grm(marker_matrix_base, genotype_ids)
+true_grm <- calc_grm(marker_mat, genotype_ids)
 
-cat("\nBase population marker data generated:\n")
-cat(sprintf("  Total markers available: %d\n", n_markers_total))
-cat(sprintf("  Total genotypes: %d\n", n_total))
-cat("\nTrue population GRM calculated (from all markers):\n")
-cat(sprintf("  Mean diagonal: %.3f\n", mean(diag(true_grm))))
-cat(sprintf("  Mean off-diagonal: %.3f\n", mean(true_grm[upper.tri(true_grm)])))
-cat(sprintf("  SD off-diagonal: %.3f\n", sd(true_grm[upper.tri(true_grm)])))
-```
-
-## Step 4: Generate 10 Study-Specific GRMs
-
-Now we create 10 different studies, each with:
-- A different subset of genotypes following population structure but with intentional overlaps
-- A different subset of markers sampled from the base population
-- GRMs calculated only from observed markers and individuals
-
-```{r study-grms}
-# Study design parameters
-n_studies <- 10
-n_markers_per_study <- 5000  # Markers per study (sampled from the 10,000 total)
-min_genotypes_per_study <- 200
-max_genotypes_per_study <- 400
-
-# Storage for study-specific data
+# Generate Study GRMs with overlap
+study_grms <- list()
 study_genotypes <- list()
 study_markers <- list()
-study_grms <- list()
-study_marker_counts <- integer(n_studies)
 
 set.seed(2025)
-
-# Design study sampling patterns that follow population structure
-# but ensure intentional overlaps
 for (k in 1:n_studies) {
-
-  # Select subset of genotypes following population structure with intentional overlaps
-  if (k <= 3) {
-    # First 3 studies: Focus on each subpopulation separately (with some spillover)
-    target_subpop <- k
-    n_study <- sample(min_genotypes_per_study:max_genotypes_per_study, 1)
-
-    # 70% from target subpopulation, 30% from others
-    target_idx <- which(subpop_labels == target_subpop)
-    other_idx <- which(subpop_labels != target_subpop)
-
-    n_from_target <- round(n_study * 0.7)
-    n_from_other <- n_study - n_from_target
-
-    study_idx <- sort(c(
-      sample(target_idx, min(n_from_target, length(target_idx))),
-      sample(other_idx, min(n_from_other, length(other_idx)))
-    ))
-
-  } else if (k <= 6) {
-    # Studies 4-6: Mix of two subpopulations (intentional overlap)
-    subpop_pair <- list(c(1,2), c(2,3), c(1,3))[[k-3]]
-    n_study <- sample(min_genotypes_per_study:max_genotypes_per_study, 1)
-
-    target_idx <- which(subpop_labels %in% subpop_pair)
-    study_idx <- sort(sample(target_idx, min(n_study, length(target_idx))))
-
-  } else {
-    # Studies 7+: Random sampling across all subpopulations
-    # with higher probability for individuals already in other studies (intentional overlap)
-    # Also ensure all genotypes are eventually covered
-    n_study <- sample(min_genotypes_per_study:max_genotypes_per_study, 1)
-
-    prev_genotypes <- unique(unlist(study_genotypes))
-    uncovered_genotypes <- setdiff(1:n_total, prev_genotypes)
-
-    # If there are uncovered genotypes and we're past study 10, ensure we include some
-    if (k > 10 && length(uncovered_genotypes) > 0) {
-      # Force inclusion of some uncovered genotypes
-      n_uncovered <- min(round(n_study * 0.3), length(uncovered_genotypes))
-      forced_idx <- sample(uncovered_genotypes, n_uncovered)
-
-      # Sample remaining from all genotypes with higher prob for previous
-      prob_include <- rep(0.3, n_total)
-      prob_include[prev_genotypes] <- 0.6
-      prob_include[forced_idx] <- 0  # Already forced in
-
-      remaining_idx <- sample(1:n_total, n_study - n_uncovered, prob = prob_include)
-      study_idx <- sort(c(forced_idx, remaining_idx))
-    } else {
-      prob_include <- rep(0.3, n_total)
-      prob_include[prev_genotypes] <- 0.6  # Higher prob for already-sampled individuals
-
-      study_idx <- sample(1:n_total, n_study, prob = prob_include)
-      study_idx <- sort(study_idx)
-    }
-  }
-
-  study_genotypes[[k]] <- study_idx
-  study_ids <- genotype_ids[study_idx]
-  n_study <- length(study_idx)
-
-  # Sample markers from the base population
-  # Different studies observe different marker panels
-  # Allow some overlap between studies (30-50% shared markers)
+  # Sample genotypes with overlap
+  # Higher probability for already sampled individuals to ensure connectivity
   if (k == 1) {
-    # First study: random marker selection
-    marker_idx <- sort(sample(1:n_markers_total, n_markers_per_study))
+    prob <- rep(1, n_total)
   } else {
-    # Subsequent studies: partial overlap with previous studies
-    prev_markers <- unique(unlist(study_markers[1:(k-1)]))
-
-    # 40% overlap with previously used markers, 60% new markers
-    n_overlap <- round(n_markers_per_study * 0.4)
-    n_new <- n_markers_per_study - n_overlap
-
-    if (length(prev_markers) >= n_overlap) {
-      overlap_markers <- sample(prev_markers, n_overlap)
-    } else {
-      overlap_markers <- prev_markers
-      n_new <- n_markers_per_study - length(prev_markers)
-    }
-
-    available_new <- setdiff(1:n_markers_total, overlap_markers)
-    new_markers <- sample(available_new, min(n_new, length(available_new)))
-
-    marker_idx <- sort(c(overlap_markers, new_markers))
+    sampled <- unique(unlist(study_genotypes))
+    prob <- rep(1, n_total)
+    prob[which(genotype_ids %in% genotype_ids[sampled])] <- 3 # 3x more likely to be resampled
   }
 
-  study_markers[[k]] <- marker_idx
+  n_s <- sample(200:400, 1)
+  s_idx <- sort(sample(1:n_total, n_s, prob = prob))
+  study_genotypes[[k]] <- s_idx
 
-  # Extract the marker data for this study's individuals and markers
-  study_marker_matrix <- marker_matrix_base[study_idx, marker_idx, drop = FALSE]
+  # Sample markers
+  m_idx <- sort(sample(1:n_markers_base_sim, n_markers_study))
+  study_markers[[k]] <- m_idx
 
-  # Calculate Van Raden GRM for this study using only observed data
-  study_grm <- calculate_vanraden_grm(study_marker_matrix, study_ids)
-  study_grms[[k]] <- study_grm
-  study_marker_counts[k] <- length(marker_idx)
-
-  # Report subpopulation composition
-  subpop_counts <- table(subpop_labels[study_idx])
-  subpop_str <- paste(sprintf("Pop%d:%d", as.numeric(names(subpop_counts)),
-                             subpop_counts), collapse = ", ")
-
-  cat(sprintf("Study %2d: %2d genotypes (%s), %4d markers\n",
-              k, n_study, subpop_str, study_marker_counts[k]))
+  # Calculate GRM
+  M_sub <- marker_mat[s_idx, m_idx]
+  study_grms[[k]] <- calc_grm(M_sub, genotype_ids[s_idx])
 }
-
 names(study_grms) <- paste0("Study", 1:n_studies)
-names(study_genotypes) <- paste0("Study", 1:n_studies)
-names(study_markers) <- paste0("Study", 1:n_studies)
+
+# Track marker counts for each study (needed for degrees of freedom)
+study_marker_counts <- sapply(study_markers, length)
 ```
 
 ## Step 5: Summary of Study Overlap
@@ -345,8 +172,10 @@ names(study_markers) <- paste0("Study", 1:n_studies)
 genotype_overlap_matrix <- matrix(0, n_studies, n_studies)
 for (i in 1:n_studies) {
   for (j in 1:n_studies) {
-    genotype_overlap_matrix[i, j] <- length(intersect(study_genotypes[[i]],
-                                                       study_genotypes[[j]]))
+    genotype_overlap_matrix[i, j] <- length(intersect(
+      study_genotypes[[i]],
+      study_genotypes[[j]]
+    ))
   }
 }
 
@@ -360,8 +189,10 @@ print(genotype_overlap_matrix)
 marker_overlap_matrix <- matrix(0, n_studies, n_studies)
 for (i in 1:n_studies) {
   for (j in 1:n_studies) {
-    marker_overlap_matrix[i, j] <- length(intersect(study_markers[[i]],
-                                                     study_markers[[j]]))
+    marker_overlap_matrix[i, j] <- length(intersect(
+      study_markers[[i]],
+      study_markers[[j]]
+    ))
   }
 }
 
@@ -373,115 +204,36 @@ print(marker_overlap_matrix)
 
 cat("\nStudy coverage statistics:\n")
 all_genotypes_covered <- unique(unlist(study_genotypes))
-cat(sprintf("  Genotypes: %d / %d covered (%.1f%%)\n",
-            length(all_genotypes_covered), n_total,
-            100 * length(all_genotypes_covered) / n_total))
+cat(sprintf(
+  "  Genotypes: %d / %d covered (%.1f%%)\n",
+  length(all_genotypes_covered), n_total,
+  100 * length(all_genotypes_covered) / n_total
+))
 
 genotype_frequency <- table(unlist(study_genotypes))
-cat(sprintf("  Mean studies per genotype: %.1f (range: %d-%d)\n",
-            mean(genotype_frequency),
-            min(genotype_frequency), max(genotype_frequency)))
+cat(sprintf(
+  "  Mean studies per genotype: %.1f (range: %d-%d)\n",
+  mean(genotype_frequency),
+  min(genotype_frequency), max(genotype_frequency)
+))
 
 all_markers_used <- unique(unlist(study_markers))
-cat(sprintf("  Markers: %d / %d used (%.1f%%)\n",
-            length(all_markers_used), n_markers_total,
-            100 * length(all_markers_used) / n_markers_total))
+cat(sprintf(
+  "  Markers: %d / %d used (%.1f%%)\n",
+  length(all_markers_used), n_markers_base_sim,
+  100 * length(all_markers_used) / n_markers_base_sim
+))
 
 marker_frequency <- table(unlist(study_markers))
-cat(sprintf("  Mean studies per marker: %.1f (range: %d-%d)\n",
-            mean(marker_frequency),
-            min(marker_frequency), max(marker_frequency)))
-```
-
-# Visualization of Sample GRMs
-
-Now we visualize all 10 sample GRMs along with the true population GRM.
-
-```{r heatmap-function}
-# Helper function to create a GRM heatmap
-plot_grm_heatmap <- function(grm_matrix, title = "GRM",
-                             text_size = 6, show_values = FALSE) {
-  n <- nrow(grm_matrix)
-
-  # Convert to long format for ggplot
-  grm_long <- expand.grid(
-    Row = 1:n,
-    Col = 1:n
-  )
-  grm_long$value <- as.vector(grm_matrix)
-  grm_long$Row_id <- rownames(grm_matrix)[grm_long$Row]
-  grm_long$Col_id <- colnames(grm_matrix)[grm_long$Col]
-
-  # Create plot
-  p <- ggplot(grm_long, aes(x = Col, y = n - Row + 1, fill = value)) +
-    geom_tile() +
-    scale_fill_gradient2(
-      low = "#2166AC",
-      mid = "#F7F7F7",
-      high = "#B2182B",
-      midpoint = 0.5,
-      limits = c(-0.5, 2),
-      name = "Relationship"
-    ) +
-    labs(title = title, x = NULL, y = NULL) +
-    theme_minimal(base_size = text_size) +
-    theme(
-      axis.text.x = element_blank(),
-      axis.text.y = element_blank(),
-      axis.ticks = element_blank(),
-      panel.grid = element_blank(),
-      plot.title = element_text(hjust = 0.5, face = "bold"),
-      legend.position = "right",
-      legend.key.height = unit(0.3, "cm"),
-      legend.key.width = unit(0.15, "cm")
-    ) +
-    coord_equal()
-
-  return(p)
-}
-```
-
-```{r visualize-all-grms, fig.width=9, fig.height=18, out.width="100%", fig.alt="Heatmaps of the true population GRM and each study-specific GRM before alignment."}
-# Create heatmaps for all studies
-study_plots <- lapply(1:n_studies, function(k) {
-  plot_grm_heatmap(
-    study_grms[[k]],
-    title = sprintf("Study %d\n(n=%d)", k, length(study_genotypes[[k]])),
-    text_size = 8
-  )
-})
-
-# Create heatmap for true GRM (full population)
-true_grm_plot <- plot_grm_heatmap(
-  true_grm,
-  title = sprintf("True Population GRM\n(n=%d)", n_total),
-  text_size = 8
-)
-
-# Arrange all plots in a grid (1 true + n_studies)
-all_plots <- c(list(true_grm_plot), study_plots)
-n_plots <- length(all_plots)
-n_cols <- 3
-n_rows <- ceiling(n_plots / n_cols)
-grid.arrange(grobs = all_plots, ncol = n_cols, nrow = n_rows)
-```
-
-```{r visualize-study-subset, fig.width=8, fig.height=7, out.width="100%", fig.alt="Heatmaps for the first four study GRMs highlighting sample size and marker coverage."}
-# Show first 4 studies in more detail
-study_plots_detail <- lapply(1:4, function(k) {
-  plot_grm_heatmap(
-    study_grms[[k]],
-    title = sprintf("Study %d (n=%d, m=%d markers)",
-                   k, length(study_genotypes[[k]]), study_marker_counts[k]),
-    text_size = 10
-  )
-})
-
-grid.arrange(grobs = study_plots_detail, ncol = 2, nrow = 2)
+cat(sprintf(
+  "  Mean studies per marker: %.1f (range: %d-%d)\n",
+  mean(marker_frequency),
+  min(marker_frequency), max(marker_frequency)
+))
 ```
 
 # Comparison: True vs Sample GRMs
-
+ 
 For genotypes that appear in multiple studies, we can compare the estimated relationships.
 
 ```{r compare-relationships, fig.width=7, fig.height=5, out.width="90%"}
@@ -493,14 +245,16 @@ well_sampled_genotypes <- names(genotype_id_counts)[genotype_id_counts >= 3]
 
 if (length(well_sampled_genotypes) >= 10) {
   # Select 10 well-sampled genotypes
-  selected_genotypes <- sample(well_sampled_genotypes,
-                               min(10, length(well_sampled_genotypes)))
+  selected_genotypes <- sample(
+    well_sampled_genotypes,
+    min(10, length(well_sampled_genotypes))
+  )
 
   # For each pair, collect estimates from different studies
   comparison_data <- list()
 
-  for (i in 1:(length(selected_genotypes)-1)) {
-    for (j in (i+1):length(selected_genotypes)) {
+  for (i in 1:(length(selected_genotypes) - 1)) {
+    for (j in (i + 1):length(selected_genotypes)) {
       g1 <- selected_genotypes[i]
       g2 <- selected_genotypes[j]
 
@@ -543,13 +297,19 @@ if (length(well_sampled_genotypes) >= 10) {
     theme(plot.title = element_text(hjust = 0.5, face = "bold"))
 
   cat("\nComparison statistics:\n")
-  cat(sprintf("  Number of genotype pairs compared: %d\n",
-              nrow(comparison_df)))
+  cat(sprintf(
+    "  Number of genotype pairs compared: %d\n",
+    nrow(comparison_df)
+  ))
   cat(sprintf("  RMSE: %.4f\n", sqrt(mean(comparison_df$Error^2))))
   cat(sprintf("  MAE: %.4f\n", mean(abs(comparison_df$Error))))
-  cat(sprintf("  Correlation: %.4f\n",
-              cor(comparison_df$True_Relationship,
-                  comparison_df$Estimated_Relationship)))
+  cat(sprintf(
+    "  Correlation: %.4f\n",
+    cor(
+      comparison_df$True_Relationship,
+      comparison_df$Estimated_Relationship
+    )
+  ))
 }
 ```
 
@@ -580,8 +340,8 @@ ordered_genotype_ids <- genotype_ids[hc$order]
 
 # Helper function to plot aligned GRM heatmap
 plot_aligned_grm <- function(grm_matrix, title = "GRM", ordered_ids,
-                              show_observed_only = FALSE,
-                              text_size = 8) {
+                             show_observed_only = FALSE,
+                             text_size = 8) {
   n <- nrow(grm_matrix)
 
   # Reorder matrix
@@ -683,7 +443,7 @@ coverage_summary <- do.call(rbind, lapply(1:n_studies, function(k) {
 
   # Count coverage for each subpopulation pair
   coverage_data <- expand.grid(Pop1 = 1:3, Pop2 = 1:3)
-  coverage_data$Coverage <- sapply(1:nrow(coverage_data), function(i) {
+  coverage_data$Coverage <- sapply(seq_len(nrow(coverage_data)), function(i) {
     pop1 <- coverage_data$Pop1[i]
     pop2 <- coverage_data$Pop2[i]
 
@@ -813,8 +573,10 @@ names(nu_vec) <- paste0("Study", 1:n_studies)
 
 cat("Prepared data for CovCombR:\n")
 for (k in 1:n_studies) {
-  cat(sprintf("  Study %2d: %d genotypes, nu = %d\n",
-              k, nrow(study_grms[[k]]), nu_vec[k]))
+  cat(sprintf(
+    "  Study %2d: %d genotypes, nu = %d\n",
+    k, nrow(study_grms[[k]]), nu_vec[k]
+  ))
 }
 ```
 
@@ -830,18 +592,20 @@ fit <- fit_covcomb(
   init_sigma = "identity",
   scale_method = "none",
   control = list(
-    max_iter = 50,      # Small number for fast testing
+    max_iter = 50, # Small number for fast testing
     tol = 1e-5,
     ridge = 1e-6
   ),
-  se_method = "none"    # Skip SE computation for speed
+  se_method = "none" # Skip SE computation for speed
 )
 
 print(fit)
 
 # plot log-likelihood convergence
-plot(fit$history$log_likelihood, type = "o", xlab = "Iteration", ylab = "Log-Likelihood",
-     main = "CovCombR Log-Likelihood Convergence")
+plot(fit$history$log_likelihood,
+  type = "o", xlab = "Iteration", ylab = "Log-Likelihood",
+  main = "CovCombR Log-Likelihood Convergence"
+)
 
 # Extract the combined GRM
 combined_grm_raw <- fit$S_hat
@@ -871,8 +635,10 @@ cat(sprintf("  Combined GRM mean diagonal (after rescaling): %.4f\n", mean(diag(
 combined_genotype_ids <- rownames(combined_grm_raw)
 
 cat("\nCombined GRM coverage:\n")
-cat(sprintf("  Genotypes in combined GRM: %d / %d\n",
-            length(combined_genotype_ids), n_total))
+cat(sprintf(
+  "  Genotypes in combined GRM: %d / %d\n",
+  length(combined_genotype_ids), n_total
+))
 
 # Create full population matrix, filling in with NA for unobserved genotypes
 combined_grm <- matrix(NA, n_total, n_total)
@@ -985,9 +751,9 @@ cat(sprintf("  Unobserved (imputed): %d\n", sum(scatter_data$Type == "Unobserved
 
 # Define colors for each category
 type_colors <- c(
-  "Diagonal" = "#E31A1C",                    # Red for diagonal
-  "Observed (off-diagonal)" = "#1F78B4",     # Blue for observed
-  "Unobserved (imputed)" = "#33A02C"         # Green for imputed
+  "Diagonal" = "#E31A1C", # Red for diagonal
+  "Observed (off-diagonal)" = "#1F78B4", # Blue for observed
+  "Unobserved (imputed)" = "#33A02C" # Green for imputed
 )
 
 scatter_plot <- ggplot(scatter_data, aes(x = True, y = Combined, color = Type, alpha = Type)) +
@@ -1032,15 +798,23 @@ upper_tri_idx <- upper.tri(true_grm, diag = TRUE)
 # Overall statistics (only for genotypes present in combined GRM)
 valid_idx <- upper_tri_idx & !is.na(combined_grm)
 cat("Overall Recovery Statistics (genotypes in combined GRM):\n")
-cat(sprintf("  N pairs: %d (%.1f%% of total)\n",
-            sum(valid_idx),
-            100 * sum(valid_idx) / sum(upper_tri_idx)))
-cat(sprintf("  RMSE: %.4f\n",
-            sqrt(mean((combined_grm[valid_idx] - true_grm[valid_idx])^2, na.rm = TRUE))))
-cat(sprintf("  MAE: %.4f\n",
-            mean(abs(combined_grm[valid_idx] - true_grm[valid_idx]), na.rm = TRUE)))
-cat(sprintf("  Correlation: %.4f\n",
-            cor(combined_grm[valid_idx], true_grm[valid_idx], use = "complete.obs")))
+cat(sprintf(
+  "  N pairs: %d (%.1f%% of total)\n",
+  sum(valid_idx),
+  100 * sum(valid_idx) / sum(upper_tri_idx)
+))
+cat(sprintf(
+  "  RMSE: %.4f\n",
+  sqrt(mean((combined_grm[valid_idx] - true_grm[valid_idx])^2, na.rm = TRUE))
+))
+cat(sprintf(
+  "  MAE: %.4f\n",
+  mean(abs(combined_grm[valid_idx] - true_grm[valid_idx]), na.rm = TRUE)
+))
+cat(sprintf(
+  "  Correlation: %.4f\n",
+  cor(combined_grm[valid_idx], true_grm[valid_idx], use = "complete.obs")
+))
 
 # Separate statistics for observed vs unobserved pairs
 # Note: observed_pairs was already computed in the evaluate-recovery chunk
@@ -1054,28 +828,44 @@ unobserved_valid <- unobserved_idx & !is.na(combined_grm)
 
 if (sum(observed_valid) > 0) {
   cat("\nObserved Pairs (in at least one study):\n")
-  cat(sprintf("  N pairs: %d (%.1f%%)\n",
-              sum(observed_valid),
-              100 * sum(observed_valid) / sum(upper_tri_idx)))
-  cat(sprintf("  RMSE: %.4f\n",
-              sqrt(mean((combined_grm[observed_valid] - true_grm[observed_valid])^2, na.rm = TRUE))))
-  cat(sprintf("  MAE: %.4f\n",
-              mean(abs(combined_grm[observed_valid] - true_grm[observed_valid]), na.rm = TRUE)))
-  cat(sprintf("  Correlation: %.4f\n",
-              cor(combined_grm[observed_valid], true_grm[observed_valid], use = "complete.obs")))
+  cat(sprintf(
+    "  N pairs: %d (%.1f%%)\n",
+    sum(observed_valid),
+    100 * sum(observed_valid) / sum(upper_tri_idx)
+  ))
+  cat(sprintf(
+    "  RMSE: %.4f\n",
+    sqrt(mean((combined_grm[observed_valid] - true_grm[observed_valid])^2, na.rm = TRUE))
+  ))
+  cat(sprintf(
+    "  MAE: %.4f\n",
+    mean(abs(combined_grm[observed_valid] - true_grm[observed_valid]), na.rm = TRUE)
+  ))
+  cat(sprintf(
+    "  Correlation: %.4f\n",
+    cor(combined_grm[observed_valid], true_grm[observed_valid], use = "complete.obs")
+  ))
 }
 
 if (sum(unobserved_valid) > 0) {
   cat("\nUnobserved Pairs (never jointly observed, but both genotypes in studies):\n")
-  cat(sprintf("  N pairs: %d (%.1f%%)\n",
-              sum(unobserved_valid),
-              100 * sum(unobserved_valid) / sum(upper_tri_idx)))
-  cat(sprintf("  RMSE: %.4f\n",
-              sqrt(mean((combined_grm[unobserved_valid] - true_grm[unobserved_valid])^2, na.rm = TRUE))))
-  cat(sprintf("  MAE: %.4f\n",
-              mean(abs(combined_grm[unobserved_valid] - true_grm[unobserved_valid]), na.rm = TRUE)))
-  cat(sprintf("  Correlation: %.4f\n",
-              cor(combined_grm[unobserved_valid], true_grm[unobserved_valid], use = "complete.obs")))
+  cat(sprintf(
+    "  N pairs: %d (%.1f%%)\n",
+    sum(unobserved_valid),
+    100 * sum(unobserved_valid) / sum(upper_tri_idx)
+  ))
+  cat(sprintf(
+    "  RMSE: %.4f\n",
+    sqrt(mean((combined_grm[unobserved_valid] - true_grm[unobserved_valid])^2, na.rm = TRUE))
+  ))
+  cat(sprintf(
+    "  MAE: %.4f\n",
+    mean(abs(combined_grm[unobserved_valid] - true_grm[unobserved_valid]), na.rm = TRUE)
+  ))
+  cat(sprintf(
+    "  Correlation: %.4f\n",
+    cor(combined_grm[unobserved_valid], true_grm[unobserved_valid], use = "complete.obs")
+  ))
 }
 
 # Statistics by subpopulation blocks
@@ -1096,8 +886,10 @@ for (pop1 in 1:3) {
       block_rmse <- sqrt(mean((combined_grm[block_valid] - true_grm[block_valid])^2, na.rm = TRUE))
       block_cor <- cor(combined_grm[block_valid], true_grm[block_valid], use = "complete.obs")
 
-      cat(sprintf("  Pop%d-Pop%d: N=%d, RMSE=%.4f, Cor=%.4f\n",
-                  pop1, pop2, sum(block_valid), block_rmse, block_cor))
+      cat(sprintf(
+        "  Pop%d-Pop%d: N=%d, RMSE=%.4f, Cor=%.4f\n",
+        pop1, pop2, sum(block_valid), block_rmse, block_cor
+      ))
     }
   }
 }
