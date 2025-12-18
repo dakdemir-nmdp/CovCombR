@@ -220,7 +220,14 @@ fitted.covcomb <- function(object, ...) {
 #'     \item \code{min_eigenvalue}: Smallest eigenvalue of observed information (for diagnostics)
 #'   }}
 #' \item{convergence}{Convergence information (status, iterations, final change)}
-#' \item{history}{Iteration history (relative change, log-likelihood with constant terms)}
+#' \item{history}{Iteration history data frame with columns:
+#'   \itemize{
+#'     \item \code{iteration}: Iteration number
+#'     \item \code{rel_change}: Relative change in Frobenius norm
+#'     \item \code{log_likelihood}: Observed-data log-likelihood (includes normalizing constants)
+#'     \item \code{log_likelihood_per_df}: Normalized log-likelihood per degree of freedom
+#'           (interpretable metric for comparing models across different sample sizes)
+#'   }}
 #' \item{call}{Matched call}
 #'
 #' @examples
@@ -331,11 +338,15 @@ fit_covcomb <- function(S_list, nu,
   # EM loop
   history <- data.frame(
     iteration = integer(), rel_change = numeric(),
-    log_likelihood = numeric()
+    log_likelihood = numeric(),
+    log_likelihood_per_df = numeric()
   )
   converged <- FALSE
   rel_change <- NA_real_
   iterations_used <- 0L
+
+  # Compute total degrees of freedom for normalization
+  total_nu <- sum(sapply(internal_data$samples, function(s) s$nu))
 
   for (i in 1:ctrl$max_iter) {
     # E-step
@@ -354,10 +365,12 @@ fit_covcomb <- function(S_list, nu,
     denom <- max(norm(sigma_current, "F"), .Machine$double.eps)
     rel_change <- norm(sigma_new - sigma_current, "F") / denom
     loglik <- .compute_loglik(sigma_new, internal_data)
+    loglik_per_df <- loglik / total_nu
     history[i, ] <- list(
       iteration = i,
       rel_change = rel_change,
-      log_likelihood = loglik
+      log_likelihood = loglik,
+      log_likelihood_per_df = loglik_per_df
     )
 
     sigma_current <- sigma_new
@@ -982,4 +995,125 @@ fit_covcomb <- function(S_list, nu,
   A_pd <- eig$vectors %*% diag(eig$values, nrow = length(eig$values)) %*% t(eig$vectors)
   if (!is.null(dn)) dimnames(A_pd) <- dn # Restore dimnames
   A_pd
+}
+
+# -- Model Comparison and Information Criteria --------------------------------
+
+#' Compute Akaike Information Criterion (AIC) for a fitted covcomb model
+#'
+#' @param fit A fitted object of class "covcomb" from fit_covcomb()
+#' @return Numeric value of AIC
+#' @details
+#' AIC is computed as -2 * log_likelihood + 2 * k, where k is the number of
+#' free parameters (unique elements in the covariance matrix).
+#'
+#' @examples
+#' \dontrun{
+#' fit <- fit_covcomb(S_list, nu_vec)
+#' aic <- compute_aic(fit)
+#' }
+#' @export
+compute_aic <- function(fit) {
+  if (!inherits(fit, "covcomb")) {
+    stop("fit must be an object of class 'covcomb'", call. = FALSE)
+  }
+  # Number of free parameters in symmetric covariance matrix
+  p <- nrow(fit$Sigma_hat)
+  k <- p * (p + 1) / 2
+  # Get final log-likelihood
+  ll <- tail(fit$history$log_likelihood, 1)
+  aic <- -2 * ll + 2 * k
+  return(aic)
+}
+
+#' Compute Bayesian Information Criterion (BIC) for a fitted covcomb model
+#'
+#' @param fit A fitted object of class "covcomb" from fit_covcomb()
+#' @param nu Named numeric vector of degrees of freedom used in fitting
+#' @return Numeric value of BIC
+#' @details
+#' BIC is computed as -2 * log_likelihood + log(n) * k, where k is the number
+#' of free parameters and n is the total sample size (sum of degrees of freedom).
+#'
+#' @examples
+#' \dontrun{
+#' fit <- fit_covcomb(S_list, nu_vec)
+#' bic <- compute_bic(fit, nu_vec)
+#' }
+#' @export
+compute_bic <- function(fit, nu) {
+  if (!inherits(fit, "covcomb")) {
+    stop("fit must be an object of class 'covcomb'", call. = FALSE)
+  }
+  if (!is.numeric(nu) || is.null(names(nu))) {
+    stop("nu must be a named numeric vector", call. = FALSE)
+  }
+  # Number of free parameters in symmetric covariance matrix
+  p <- nrow(fit$Sigma_hat)
+  k <- p * (p + 1) / 2
+  # Total degrees of freedom as effective sample size
+  total_nu <- sum(nu)
+  # Get final log-likelihood
+  ll <- tail(fit$history$log_likelihood, 1)
+  bic <- -2 * ll + log(total_nu) * k
+  return(bic)
+}
+
+#' Compare two fitted covcomb models
+#'
+#' @param fit1 First fitted object of class "covcomb"
+#' @param fit2 Second fitted object of class "covcomb"
+#' @return A list with components:
+#'   \item{log_likelihood_diff}{Log-likelihood difference (fit1 - fit2)}
+#'   \item{favored_model}{Which model is favored ("Model 1" or "Model 2")}
+#'   \item{strength}{Strength of evidence ("Very strong", "Strong", "Moderate", "Weak")}
+#'   \item{chi_square_stat}{Chi-square test statistic (-2 * diff) for nested models}
+#' @details
+#' This function compares two models in log-space to avoid numerical underflow.
+#' The chi-square statistic is valid for nested models and can be tested against
+#' a chi-square distribution with degrees of freedom equal to the difference in
+#' number of parameters.
+#'
+#' Interpretation guidelines (based on log-likelihood differences):
+#' \itemize{
+#'   \item |diff| > 10: Very strong evidence
+#'   \item 5 < |diff| <= 10: Strong evidence
+#'   \item 2 < |diff| <= 5: Moderate evidence
+#'   \item |diff| <= 2: Weak evidence
+#' }
+#'
+#' @examples
+#' \dontrun{
+#' fit1 <- fit_covcomb(S_list, nu_vec, scale_method = "none")
+#' fit2 <- fit_covcomb(S_list, nu_vec, scale_method = "estimate")
+#' comparison <- compare_models(fit1, fit2)
+#' print(comparison)
+#' }
+#' @export
+compare_models <- function(fit1, fit2) {
+  if (!inherits(fit1, "covcomb") || !inherits(fit2, "covcomb")) {
+    stop("Both fit1 and fit2 must be objects of class 'covcomb'", call. = FALSE)
+  }
+
+  ll1 <- tail(fit1$history$log_likelihood, 1)
+  ll2 <- tail(fit2$history$log_likelihood, 1)
+  diff <- ll1 - ll2
+
+  strength <- if (abs(diff) > 10) {
+    "Very strong"
+  } else if (abs(diff) > 5) {
+    "Strong"
+  } else if (abs(diff) > 2) {
+    "Moderate"
+  } else {
+    "Weak"
+  }
+
+  list(
+    log_likelihood_diff = diff,
+    favored_model = ifelse(diff > 0, "Model 1", "Model 2"),
+    strength = strength,
+    chi_square_stat = -2 * diff,
+    note = "Chi-square statistic is valid for nested models. For non-nested models, use AIC/BIC comparison."
+  )
 }

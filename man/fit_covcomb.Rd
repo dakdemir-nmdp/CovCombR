@@ -18,7 +18,8 @@ fit_covcomb(
 \item{S_list}{Named list of sample covariance matrices (e.g., from \code{cov(X)}).
 Each matrix is a principal submatrix with row/column names identifying observed variables.}
 
-\item{nu}{Named numeric vector of degrees of freedom (sample sizes) for each sample}
+\item{nu}{Named numeric vector of degrees of freedom (sample sizes) for each sample.
+Must be at least the number of observed variables for each corresponding sample.}
 
 \item{scale_method}{Scaling method: \code{"none"} (default) or \code{"estimate"}}
 
@@ -87,7 +88,14 @@ Object of class \code{covcomb} containing:
     \item \code{min_eigenvalue}: Smallest eigenvalue of observed information (for diagnostics)
   }}
 \item{convergence}{Convergence information (status, iterations, final change)}
-\item{history}{Iteration history (relative change, log-likelihood with constant terms)}
+\item{history}{Iteration history data frame with columns:
+  \itemize{
+    \item \code{iteration}: Iteration number
+    \item \code{rel_change}: Relative change in Frobenius norm
+    \item \code{log_likelihood}: Observed-data log-likelihood (includes normalizing constants)
+    \item \code{log_likelihood_per_df}: Normalized log-likelihood per degree of freedom
+          (interpretable metric for comparing models across different sample sizes)
+  }}
 \item{call}{Matched call}
 }
 \description{
@@ -143,17 +151,17 @@ diag(true_Sigma) <- 1
 
 # Generate 3 sample covariances with different missing patterns
 # Simulate from Wishart, then convert to sample covariances
-W1 <- stats::rWishart(1, 50, true_Sigma[1:5, 1:5])[,,1]
+W1 <- stats::rWishart(1, 50, true_Sigma[1:5, 1:5])[, , 1]
 S1 <- W1 / 50
 dimnames(S1) <- list(var_names[1:5], var_names[1:5])
 
-W2 <- stats::rWishart(1, 60, true_Sigma[3:8, 3:8])[,,1]
+W2 <- stats::rWishart(1, 60, true_Sigma[3:8, 3:8])[, , 1]
 S2 <- W2 / 60
 dimnames(S2) <- list(var_names[3:8], var_names[3:8])
 
-W3 <- stats::rWishart(1, 55, true_Sigma[c(1,3,5,7), c(1,3,5,7)])[,,1]
+W3 <- stats::rWishart(1, 55, true_Sigma[c(1, 3, 5, 7), c(1, 3, 5, 7)])[, , 1]
 S3 <- W3 / 55
-dimnames(S3) <- list(var_names[c(1,3,5,7)], var_names[c(1,3,5,7)])
+dimnames(S3) <- list(var_names[c(1, 3, 5, 7)], var_names[c(1, 3, 5, 7)])
 
 S_list <- list(sample1 = S1, sample2 = S2, sample3 = S3)
 nu <- c(sample1 = 50, sample2 = 60, sample3 = 55)
@@ -163,7 +171,7 @@ fit <- fit_covcomb(S_list, nu, se_method = "plugin")
 print(fit)
 
 # Extract combined covariance estimate (same scale as input sample covariances)
-Sigma_combined <- fit$Sigma_hat  # or coef(fit) or fit$S_hat
+Sigma_combined <- fit$Sigma_hat # or coef(fit) or fit$S_hat
 
 # The output is at the same scale as input sample covariances
 # Compare to true population covariance
