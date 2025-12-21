@@ -139,6 +139,82 @@ and provides fast asymptotic approximations. Control parameters can be specified
 \code{control$sem} with elements \code{h} (finite difference step, default 1e-6) and
 \code{ridge} (regularization, default uses \code{control$ridge}).
 }
+\section{Standard Error Method Selection}{
+
+
+Choose the appropriate SE method based on your needs:
+
+\describe{
+  \item{\strong{plugin}}{
+    Fast Fisher information-based SEs. \strong{Anti-conservative} for imputed entries.
+    \itemize{
+      \item Use for: Quick diagnostics, large samples (ν >> p)
+      \item Runtime: O(p³)
+      \item Caveat: Underest imates uncertainty for entries with missing data
+      \item Returns NA for never-jointly-observed pairs (honest uncertainty)
+    }
+  }
+  \item{\strong{bootstrap}}{
+    Parametric bootstrap (Wishart resampling). \strong{Most reliable.}
+    \itemize{
+      \item Use for: Publication, formal inference, hypothesis testing
+      \item Runtime: O(B × K × p³). Recommended B = 200
+      \item Accounts for both sampling variance AND imputation uncertainty
+      \item Valid for all entries, including never-observed pairs
+    }
+  }
+  \item{\strong{sem}}{
+    Supplemented EM (Meng & Rubin, 1991). \strong{Experimental.}
+    \itemize{
+      \item Use for: Large problems where bootstrap too slow (p > 100)
+      \item Runtime: O(p⁴) for rate matrix computation
+      \item Must validate against bootstrap on subset
+      \item Check diagnostics: condition number, min eigenvalue
+    }
+  }
+}
+
+See \code{vignette("standard-errors")} for detailed comparison and selection guide.
+}
+
+\section{Understanding Outputs}{
+
+
+\strong{PRIMARY OUTPUT:}
+\itemize{
+  \item \code{$Sigma_hat} - Combined covariance matrix. \strong{Use this for most applications.}
+    Access via \code{coef(fit)}.
+  \item \code{$Sigma_se} - Standard errors on Sigma_hat (if \code{se_method != "none"}).
+}
+
+\strong{ALTERNATIVE SCALE PRESENTATION:}
+\itemize{
+  \item \code{$S_hat} - Rescaled version of Sigma_hat. Access via \code{fitted(fit)}.
+  \item When \code{scale_method = "none"}: identical to Sigma_hat
+  \item When \code{scale_method = "estimate"} with \code{alpha_normalization = "geometric"}: identical to Sigma_hat
+  \item When \code{scale_method = "estimate"} with \code{alpha_normalization = "arithmetic"}: rescaled by mean(alpha)
+  \item \code{$S_hat_se} - Standard errors on S_hat (rescaled from Sigma_se).
+}
+
+\strong{SCALE PARAMETERS (when scale_method = "estimate"):}
+\itemize{
+  \item \code{$alpha_hat} - Per-study scale factors showing relative scaling across studies.
+  \item Interpretation: Study k's data contributes with scale alpha_k × common Sigma.
+  \item All equal to 1 when \code{scale_method = "none"}.
+  \item Normalized by geometric mean (default) or arithmetic mean.
+}
+
+\strong{Which output to use:}
+\itemize{
+  \item For most applications: Use \code{Sigma_hat} (via \code{coef(fit)})
+  \item For genomic prediction, GWAS, downstream analysis: Use \code{Sigma_hat}
+  \item For hypothesis testing with SEs: Use \code{Sigma_hat} with \code{Sigma_se}
+  \item \code{S_hat} is primarily for compatibility and alternative presentations
+}
+
+See \code{vignette("advanced-configuration")} for detailed explanation of the dual-scale system.
+}
+
 \examples{
 # Simulate incomplete sample covariance matrices
 set.seed(2025)

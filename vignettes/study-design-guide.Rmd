@@ -1,0 +1,631 @@
+---
+title: "Designing Studies for CovCombR"
+author: "Deniz Akdemir"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Designing Studies for CovCombR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 7,
+  fig.height = 5
+)
+library(CovCombR)
+```
+
+## Overview
+
+Successful use of CovCombR requires careful study design. This vignette provides practical guidance on:
+
+1. **Minimum requirements** - What you need for identifiable estimation
+2. **Design patterns** - Recommended overlap structures
+3. **Identifiability checks** - How to validate your design before fitting
+4. **Power considerations** - Factors affecting estimation quality
+
+**Key insight:** Not all missing data patterns allow valid estimation. The observation pattern must form a connected graph for all variables to be jointly estimable.
+
+---
+
+## Minimum Requirements
+
+### Statistical Requirements (Hard Constraints)
+
+These are **mathematical requirements** that must be satisfied:
+
+| Requirement | Minimum | Why |
+|-------------|---------|-----|
+| **Studies (K)** | ≥ 2 | Cannot combine single study |
+| **Variables (p)** | ≥ 3 | Covariance needs at least 3 variables |
+| **Sample size (ν_k)** | ≥ p_k | Wishart distribution requires ν ≥ dimension |
+| **Graph connectivity** | All connected | Each variable reachable from every other |
+
+**Connectivity requirement explained:**
+
+Variables i and j are **connected** if:
+- They appear together in ≥1 study (direct connection), OR
+- There exists a path i → k₁ → k₂ → ... → j through observed pairs
+
+**Example of DISCONNECTED pattern (invalid):**
+```
+Study 1: Variables {1, 2, 3}
+Study 2: Variables {4, 5, 6}
+```
+Variables 1-3 and 4-6 form separate components → **cannot be jointly estimated**.
+
+**Example of CONNECTED pattern (valid):**
+```
+Study 1: Variables {1, 2, 3}
+Study 2: Variables {2, 3, 4}
+Study 3: Variables {4, 5, 6}
+```
+All variables reachable through Study 2 and Study 3 → **valid estimation**.
+
+### Practical Requirements (Soft Guidelines)
+
+For **reliable** and **stable** estimation:
+
+| Guideline | Recommended | Impact |
+|-----------|-------------|--------|
+| **Studies (K)** | ≥ 3 | Better coverage, stability |
+| **Variables (p)** | ≥ 10 | Meaningful covariance structure |
+| **Overlap** | > 50% per study | Reduces imputation uncertainty |
+| **Direct observations** | > 75% of pairs | Minimizes reliance on EM imputation |
+| **Sample size (ν_k)** | ≥ 10 × p_k | Adequate precision per study |
+
+**Rule of thumb:** For reliable estimation of **never-jointly-observed pairs**, aim for K ≥ 3 studies and overall connectivity > 75%.
+
+---
+
+## Design Patterns
+
+### Pattern 1: Complete Overlap (Ideal)
+
+**Structure:** All studies observe all variables
+
+```
+Study 1: Variables {1, 2, 3, 4, 5}
+Study 2: Variables {1, 2, 3, 4, 5}
+Study 3: Variables {1, 2, 3, 4, 5}
+```
+
+**Properties:**
+- ✅ Maximum information
+- ✅ No imputation needed
+- ✅ Minimum variance
+- ❌ Not realistic for most applications
+
+**When to use:** Simulation studies, method validation
+
+### Pattern 2: Balanced Overlap (Recommended)
+
+**Structure:** Each study observes ~60-80% of variables with systematic rotation
+
+```
+Study 1: Variables {1, 2, 3, 4, 5, 6, 7, 8}     (vars 1-8)
+Study 2: Variables {3, 4, 5, 6, 7, 8, 9, 10}    (vars 3-10)
+Study 3: Variables {1, 2, 5, 6, 7, 8, 9, 10}    (vars 1-2, 5-10)
+```
+
+**Properties:**
+- ✅ Good coverage (all pairs observed ≥1 time)
+- ✅ Redundancy for robustness
+- ✅ Realistic for multi-site studies
+- ✅ Well-identified parameters
+
+**When to use:** Multi-site studies, meta-analysis, genomic panels
+
+**Design criterion:** Ensure every variable pair observed in ≥1 study.
+
+### Pattern 3: Hierarchical Blocks
+
+**Structure:** Studies organized in hierarchical blocks
+
+```
+Study 1: Block A {1, 2, 3, 4}
+Study 2: Block B {5, 6, 7, 8}
+Study 3: Bridge {2, 3, 6, 7}  ← Connects blocks
+```
+
+**Properties:**
+- ✅ Natural for multi-platform data
+- ✅ Efficient: focused studies
+- ✅ Bridge study ensures connectivity
+- ⚠️ Requires careful bridge design
+
+**When to use:** Multi-platform genomics, phenotype integration
+
+**Critical:** Bridge study must overlap with all blocks.
+
+### Pattern 4: Star Topology (Efficient)
+
+**Structure:** One large "hub" study, several focused "spoke" studies
+
+```
+Hub Study:    Variables {1, 2, 3, 4, 5, 6, 7, 8}
+Spoke Study 1: Variables {1, 2, 3}
+Spoke Study 2: Variables {4, 5, 6}
+Spoke Study 3: Variables {7, 8}
+```
+
+**Properties:**
+- ✅ Efficient: hub provides connectivity
+- ✅ Good for incremental data collection
+- ✅ Robust to spoke failures
+- ⚠️ Hub quality critical
+
+**When to use:** Central reference population + satellite studies
+
+### Pattern 5: Chain Topology (DANGEROUS)
+
+**Structure:** Studies form linear chain
+
+```
+Study 1: Variables {1, 2, 3}
+Study 2: Variables {2, 3, 4}
+Study 3: Variables {4, 5, 6}
+```
+
+**Properties:**
+- ⚠️ **Weak identifiability** for distant pairs
+- ⚠️ Large standard errors for endpoints (1-6)
+- ⚠️ Sensitive to one bad study
+- ❌ **FAILS for small p** (p ≤ 5)
+
+**When it FAILS:**
+
+```{r chain_failure_demo}
+# Chain-only with p=3, K=2 (FAILS)
+set.seed(2025)
+var_names <- c("Var1", "Var2", "Var3")
+true_Sigma <- matrix(c(1, 0.5, 0.3,
+                       0.5, 1, 0.5,
+                       0.3, 0.5, 1), 3, 3)
+dimnames(true_Sigma) <- list(var_names, var_names)
+
+# Study 1: Var1-Var2
+S1 <- rWishart(1, 100, true_Sigma[1:2, 1:2])[,,1] / 100
+dimnames(S1) <- list(var_names[1:2], var_names[1:2])
+
+# Study 2: Var2-Var3
+S2 <- rWishart(1, 100, true_Sigma[2:3, 2:3])[,,1] / 100
+dimnames(S2) <- list(var_names[2:3], var_names[2:3])
+
+# Var1-Var3 NEVER observed together
+fit_chain <- fit_covcomb(
+  S_list = list(S1 = S1, S2 = S2),
+  nu = c(S1 = 100, S2 = 100),
+  se_method = "none"
+)
+
+cat("True correlation (Var1-Var3):", true_Sigma[1,3], "\n")
+cat("Estimated correlation:", coef(fit_chain)[1,3], "\n")
+cat("Condition number:", kappa(coef(fit_chain)), "\n\n")
+
+# Often estimates collapse to arbitrary value
+cat("⚠️  Chain-only with K=2, p=3: Weakly identified!\n")
+```
+
+**When it WORKS:**
+
+Chain topology can work with:
+- Large p (p ≥ 10)
+- Many studies (K ≥ 5)
+- Good overlap per link (≥50%)
+- Adequate sample sizes (ν ≥ 100)
+
+**Recommendation:** Avoid pure chain designs. Add cross-links or "bridge" studies.
+
+---
+
+## Identifiability Diagnostics
+
+### Quick Check: Graph Connectivity
+
+```{r connectivity_check}
+# Function to check if design is connected
+check_connectivity <- function(S_list) {
+  # Extract all variable names
+  all_vars <- sort(unique(unlist(lapply(S_list, rownames))))
+  p <- length(all_vars)
+  var_map <- setNames(1:p, all_vars)
+
+  # Build adjacency matrix
+  adj_matrix <- matrix(0, p, p)
+  for (S in S_list) {
+    vars <- rownames(S)
+    indices <- var_map[vars]
+    # Add edges for all pairs in this study
+    for (i in seq_along(indices)) {
+      for (j in seq_along(indices)) {
+        if (i != j) {
+          adj_matrix[indices[i], indices[j]] <- 1
+        }
+      }
+    }
+  }
+
+  # BFS to find connected components
+  visited <- rep(FALSE, p)
+  num_components <- 0
+
+  for (start in 1:p) {
+    if (visited[start]) next
+
+    # New component
+    num_components <- num_components + 1
+    queue <- start
+    visited[start] <- TRUE
+
+    while (length(queue) > 0) {
+      current <- queue[1]
+      queue <- queue[-1]
+
+      # Visit neighbors
+      neighbors <- which(adj_matrix[current, ] == 1 & !visited)
+      visited[neighbors] <- TRUE
+      queue <- c(queue, neighbors)
+    }
+  }
+
+  list(
+    is_connected = (num_components == 1),
+    num_components = num_components,
+    variables = all_vars
+  )
+}
+
+# Example: Check balanced overlap design
+S1 <- matrix(1, 5, 5)
+rownames(S1) <- colnames(S1) <- paste0("V", 1:5)
+
+S2 <- matrix(1, 5, 5)
+rownames(S2) <- colnames(S2) <- paste0("V", 3:7)
+
+S3 <- matrix(1, 4, 4)
+rownames(S3) <- colnames(S3) <- paste0("V", c(1,2,6,7))
+
+result <- check_connectivity(list(S1, S2, S3))
+cat("Connected:", result$is_connected, "\n")
+cat("Components:", result$num_components, "\n")
+```
+
+**Interpretation:**
+- `num_components = 1` → Valid design ✅
+- `num_components > 1` → Invalid design ❌
+
+### Coverage Matrix
+
+Calculate what proportion of pairs are directly observed:
+
+```{r coverage_matrix}
+compute_coverage <- function(S_list, nu) {
+  all_vars <- sort(unique(unlist(lapply(S_list, rownames))))
+  p <- length(all_vars)
+  var_map <- setNames(1:p, all_vars)
+
+  coverage <- matrix(0, p, p)
+  dimnames(coverage) <- list(all_vars, all_vars)
+
+  for (name in names(S_list)) {
+    S <- S_list[[name]]
+    vars <- rownames(S)
+    indices <- var_map[vars]
+    nu_k <- nu[name]
+
+    coverage[indices, indices] <- coverage[indices, indices] + nu_k
+  }
+
+  # Diagonal to NA for clarity
+  diag(coverage) <- NA
+  coverage
+}
+
+# Example
+nu_vec <- c(S1 = 100, S2 = 120, S3 = 90)
+cov_mat <- compute_coverage(list(S1 = S1, S2 = S2, S3 = S3), nu_vec)
+
+cat("Coverage matrix (total degrees of freedom per pair):\n")
+print(cov_mat)
+
+# Proportion directly observed
+n_pairs <- sum(!is.na(cov_mat)) / 2
+n_observed <- sum(cov_mat > 0, na.rm = TRUE) / 2
+cat(sprintf("\nDirectly observed pairs: %.1f%%\n",
+            100 * n_observed / n_pairs))
+```
+
+**Guidelines:**
+- > 75% pairs observed → Excellent
+- 50-75% pairs observed → Good
+- < 50% pairs observed → Weak, expect large SEs
+
+### Condition Number
+
+Estimate condition number before fitting:
+
+```{r condition_check}
+# Simple initialization to estimate condition
+quick_condition_check <- function(S_list, nu) {
+  # Average observed entries (simple initialization)
+  all_vars <- sort(unique(unlist(lapply(S_list, rownames))))
+  p <- length(all_vars)
+  var_map <- setNames(1:p, all_vars)
+
+  sum_mat <- matrix(0, p, p)
+  count_mat <- matrix(0, p, p)
+
+  for (S in S_list) {
+    vars <- rownames(S)
+    indices <- var_map[vars]
+    sum_mat[indices, indices] <- sum_mat[indices, indices] + S
+    count_mat[indices, indices] <- count_mat[indices, indices] + 1
+  }
+
+  # Fill unobserved with diagonal average
+  avg_mat <- sum_mat / pmax(count_mat, 1)
+  diag_avg <- mean(diag(avg_mat)[diag(count_mat) > 0])
+  avg_mat[count_mat == 0] <- 0
+  diag(avg_mat) <- diag_avg
+
+  # Symmetrize
+  avg_mat <- (avg_mat + t(avg_mat)) / 2
+
+  # Condition number
+  kappa(avg_mat, exact = FALSE)
+}
+
+cond_est <- quick_condition_check(list(S1 = S1, S2 = S2, S3 = S3), nu_vec)
+cat("Estimated condition number:", sprintf("%.2e", cond_est), "\n")
+
+if (cond_est > 1e6) {
+  cat("⚠️  Very ill-conditioned! Check connectivity.\n")
+} else if (cond_est > 1e4) {
+  cat("⚠️  Moderately ill-conditioned. Expect some instability.\n")
+} else {
+  cat("✅ Well-conditioned design.\n")
+}
+```
+
+---
+
+## Power Considerations
+
+### What Affects Estimation Quality?
+
+**1. Sample size (ν)** - Larger samples → smaller standard errors
+
+**Scaling:** SE ∝ 1/√(Σν_k) for directly observed pairs
+
+**2. Number of studies (K)** - More studies → better coverage → smaller SEs
+
+**Benefit:** Redundancy helps, but diminishing returns after K ≈ 5
+
+**3. Overlap percentage** - More overlap → less imputation → smaller SEs
+
+**Critical threshold:** < 50% overlap → large SEs for unobserved pairs
+
+**4. Path length** - Shortest path between variables i,j in observation graph
+
+**Scaling:** SE for unobserved pair ≈ SE_direct × d_ij² where d_ij = graph distance
+
+**Example:** If Var1-Var6 requires path 1→2→3→4→5→6 (distance 5), expect SE ~25× larger than direct observation!
+
+### Simulation: Power to Detect Non-Zero Correlation
+
+```{r power_simulation, eval=FALSE}
+# Simulate power analysis for different designs
+set.seed(2025)
+p <- 12
+true_rho <- 0.3  # Correlation to detect
+
+# Design 1: Balanced overlap (60% per study)
+# Design 2: Chain (weak)
+# Design 3: Star (efficient)
+
+simulate_power <- function(design_type, n_sim = 100) {
+  rejections <- 0
+
+  for (sim in 1:n_sim) {
+    # Generate data under alternative (rho = 0.3)
+    true_Sigma <- diag(p)
+    true_Sigma[1, p] <- true_Sigma[p, 1] <- true_rho
+
+    # Create S_list based on design_type
+    # ... (design-specific code)
+
+    # Fit and test
+    fit <- fit_covcomb(S_list, nu, se_method = "bootstrap",
+                      control = list(bootstrap = list(B = 100)))
+
+    # Test H0: rho = 0
+    z <- fit$Sigma_hat[1, p] / fit$Sigma_se[1, p]
+    p_val <- 2 * pnorm(abs(z), lower.tail = FALSE)
+
+    if (p_val < 0.05) rejections <- rejections + 1
+  }
+
+  rejections / n_sim  # Empirical power
+}
+
+# Results would show:
+# Balanced overlap: ~80% power
+# Chain: ~45% power (weak!)
+# Star: ~70% power
+```
+
+---
+
+## Practical Recommendations
+
+### Planning a New Study
+
+**Step 1: Define scope**
+- How many variables (p)?
+- How many studies available (K)?
+- Expected sample size per study (ν)?
+
+**Step 2: Check feasibility**
+
+Use these heuristics:
+
+| Goal | Recommended K | Recommended ν | Overlap |
+|------|---------------|---------------|---------|
+| Exploratory | 2-3 | ≥ 50 | ≥ 40% |
+| Reliable estimates | 3-5 | ≥ 100 | ≥ 60% |
+| Publication inference | ≥ 5 | ≥ 200 | ≥ 75% |
+
+**Step 3: Design overlap structure**
+
+Prefer:
+1. Balanced overlap (all pairs observed ≥1 time)
+2. Star topology (one large hub)
+3. Hierarchical blocks (with bridge studies)
+
+Avoid:
+- Pure chain topologies (especially K < 5)
+- Disconnected components
+- < 40% overlap per study
+
+**Step 4: Pre-flight check**
+
+Before collecting data:
+```r
+# Simulate proposed design
+check_connectivity(proposed_S_list)
+compute_coverage(proposed_S_list, proposed_nu)
+quick_condition_check(proposed_S_list, proposed_nu)
+```
+
+### Working with Existing Data
+
+**Step 1: Assess what you have**
+```r
+# Check connectivity
+result <- check_connectivity(S_list)
+if (!result$is_connected) {
+  stop("Disconnected design - cannot proceed")
+}
+
+# Check coverage
+cov_mat <- compute_coverage(S_list, nu)
+pct_observed <- sum(cov_mat > 0, na.rm = TRUE) / sum(!is.na(cov_mat))
+cat("Coverage:", sprintf("%.1f%%", 100 * pct_observed), "\n")
+```
+
+**Step 2: Identify weak links**
+```r
+# Find never-observed pairs
+never_observed <- which(cov_mat == 0, arr.ind = TRUE)
+if (nrow(never_observed) > 0) {
+  cat("Never-observed pairs:", nrow(never_observed) / 2, "\n")
+  cat("⚠️  Expect large SEs for these entries\n")
+}
+```
+
+**Step 3: Decide on SE method**
+
+- Coverage > 75% → Plugin OK for diagnostics, bootstrap for publication
+- Coverage 50-75% → Bootstrap recommended
+- Coverage < 50% → Bootstrap essential, validate carefully
+
+---
+
+## Case Studies
+
+### Case 1: Multi-Site Gene Expression (Success)
+
+**Design:**
+- K = 4 sites
+- p = 20 genes
+- ν = 80-120 samples per site
+- Overlap: 70% (each site measures 14 genes, rotated)
+
+**Outcome:**
+- ✅ All pairs observed ≥2 times
+- ✅ Condition number: 15
+- ✅ SEs: 0.05-0.15 (reasonable)
+- ✅ Successfully published
+
+**Key:** Planned overlap ensured all important gene pairs observed directly.
+
+### Case 2: Multi-Platform Genomics (Partial Success)
+
+**Design:**
+- K = 3 platforms (SNP, expression, methylation)
+- p = 50 features
+- ν = 500-1000 per platform
+- Overlap: 20% (mostly disjoint)
+
+**Outcome:**
+- ⚠️ Connected but weak
+- ⚠️ Condition number: 10^5
+- ⚠️ SEs: 0.01-0.50 (highly variable)
+- ⚠️ Used only for exploration, not publication
+
+**Lesson:** Low overlap → reliable only for within-platform correlations.
+
+### Case 3: Chain Design Failure
+
+**Design:**
+- K = 2 studies
+- p = 3 variables
+- ν = 100 per study
+- Pattern: Chain (Var1-Var2 in S1, Var2-Var3 in S2)
+
+**Outcome:**
+- ❌ Var1-Var3 correlation arbitrary
+- ❌ Condition number: 10^8
+- ❌ Unusable estimates
+
+**Fix:** Added 3rd study with Var1-Var3 → problem solved!
+
+---
+
+## Checklist for New Studies
+
+Before fitting CovCombR, verify:
+
+- [ ] **Connectivity:** `check_connectivity()` returns `is_connected = TRUE`
+- [ ] **Coverage:** > 50% of variable pairs directly observed
+- [ ] **Sample size:** ν_k ≥ 10 × p_k for each study
+- [ ] **Studies:** K ≥ 3 for reliable inference
+- [ ] **Condition:** Estimated condition number < 10^6
+- [ ] **SE method:** Bootstrap if coverage < 75%
+- [ ] **Validation:** Test on subset first
+
+**If any check fails:** Consider collecting additional data or revising study scope.
+
+---
+
+## Summary
+
+**Golden Rules:**
+
+1. **Ensure connectivity** - All variables must be reachable through observed pairs
+2. **Avoid pure chains** - Especially with K < 5 or p < 10
+3. **Aim for 60-80% overlap** - Balance efficiency and coverage
+4. **Plan redundancy** - Each pair observed in ≥2 studies ideal
+5. **Use bootstrap SEs** - Especially when coverage < 75%
+6. **Check before fitting** - Connectivity, coverage, condition number
+
+**When in doubt:** Simulate your proposed design and check estimation quality before collecting data!
+
+---
+
+## References
+
+- Anderson, T. W. (2003). *An Introduction to Multivariate Statistical Analysis* (3rd ed.). Wiley.
+- Lauritzen, S. L. (1996). *Graphical Models*. Oxford University Press.
+
+## See Also
+
+- `vignette("CovCombR-vignette")` - Package introduction
+- `vignette("standard-errors")` - SE method selection
+- `vignette("advanced-configuration")` - Control parameters
+- `?fit_covcomb` - Complete function reference

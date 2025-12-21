@@ -9,3 +9,7 @@
 docs/
 # Exclude PDF vignettes (can be rebuilt)
 vignettes/*.pdf
+
+# Power analysis result files
+power_analysis_*.rds
+power_analysis_*.csv

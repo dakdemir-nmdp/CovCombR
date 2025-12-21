@@ -1,21 +1,4 @@
----
-title: "Combining Genomic Relationship Matrices from Multiple Populations"
-author: "Deniz Akdemir"
-date: "`r Sys.Date()`"
-output:
-  pdf_document:
-    toc: true
-    number_sections: true
-    fig_caption: true
-    keep_tex: false
-bibliography: references.bib
-vignette: >
-  %\VignetteIndexEntry{Combining Genomic Relationship Matrices from Multiple Populations}
-  %\VignetteEngine{knitr::rmarkdown}
-  %\VignetteEncoding{UTF-8}
----
-
-```{r setup, include=FALSE}
+## ----setup, include=FALSE-----------------------------------------------------
 knitr::opts_chunk$set(
   echo = TRUE,
   warning = FALSE,
@@ -31,47 +14,8 @@ library(gridExtra)
 # Suppress lint warnings for ggplot aesthetic variables
 utils::globalVariables(c("Col", "Row", "value_plot", "is_observed"))
 library(CovCombR)
-```
 
-# Introduction
-
-In genomic selection and quantitative genetics, researchers often have access to genomic relationship matrices (GRMs) calculated from different marker sets across overlapping but not identical sets of individuals. This vignette demonstrates how to use CovCombR to combine multiple GRMs estimated from different populations with:
-
-- Overlapping sets of genotypes (individuals)
-- Different marker sets for each population
-- Realistic population structure
-- Varying allele frequencies across populations
-
-We will simulate 10 different GRMs, each calculated on a subset of individuals from a larger population, using different sets of markers with population-specific allele frequencies.
-
-# Simulation Design
-
-## Population Structure
-
-We create a realistic scenario where:
-
-1. A large population of $n = 100$ genotypes exists with realistic population structure
-2. We have 10 different studies/marker panels, each genotyping overlapping subsets of these 100 individuals
-3. Each study uses a different set of markers (with some potential overlap)
-4. Each study has slightly different allele frequencies due to population substructure
-
-## Van Raden GRM
-
-For each population and marker set, we calculate the Van Raden (2008) GRM:
-
-$$
-\mathbf{G} = \frac{\mathbf{Z}\mathbf{Z}'}{\text{tr}(\mathbf{Z}\mathbf{Z}')/n}
-$$
-
-where $\mathbf{Z}$ is the centered and scaled marker matrix.
-
-# Data Generation
-
-## Step 1: Generate Base Population Structure
-
-First, we create a realistic population structure by simulating a base relationship matrix with population substructure. We'll create 3 subpopulations with different levels of relatedness.
-
-```{r simulation-setup}
+## ----simulation-setup---------------------------------------------------------
 # Simulation parameters
 n_total <- 1000 # Total genotypes
 n_markers_study <- 5000 # Total markers per study
@@ -163,11 +107,8 @@ names(study_grms) <- paste0("Study", 1:n_studies)
 
 # Track marker counts for each study (needed for degrees of freedom)
 study_marker_counts <- sapply(study_markers, length)
-```
 
-## Step 5: Summary of Study Overlap
-
-```{r study-overlap}
+## ----study-overlap------------------------------------------------------------
 # Calculate pairwise overlap between studies (genotypes)
 genotype_overlap_matrix <- matrix(0, n_studies, n_studies)
 for (i in 1:n_studies) {
@@ -230,13 +171,8 @@ cat(sprintf(
   mean(marker_frequency),
   min(marker_frequency), max(marker_frequency)
 ))
-```
 
-# Comparison: True vs Sample GRMs
- 
-For genotypes that appear in multiple studies, we can compare the estimated relationships.
-
-```{r compare-relationships, fig.width=7, fig.height=5, out.width="90%"}
+## ----compare-relationships, fig.width=7, fig.height=5, out.width="90%"--------
 # Find genotypes that appear in at least 3 studies
 # Convert study_genotypes to genotype IDs
 all_study_genotype_ids <- lapply(study_genotypes, function(idx) genotype_ids[idx])
@@ -311,13 +247,8 @@ if (length(well_sampled_genotypes) >= 10) {
     )
   ))
 }
-```
 
-# Aligned GRM Visualization
-
-To better understand the coverage and quality of each sample GRM, we visualize all GRMs using the same ordering based on the full population GRM. Unobserved relationships are shown in gray.
-
-```{r aligned-grm-viz, fig.width=9, fig.height=18, out.width="100%", fig.alt="Aligned heatmaps showing observed and missing entries for each study GRM alongside the true GRM."}
+## ----aligned-grm-viz, fig.width=9, fig.height=18, out.width="100%", fig.alt="Aligned heatmaps showing observed and missing entries for each study GRM alongside the true GRM."----
 # Create full population matrices for each study, with NA for unobserved pairs
 study_grms_full <- lapply(1:n_studies, function(k) {
   # Create a matrix for the full population
@@ -419,19 +350,8 @@ n_plots_aligned <- length(all_aligned_plots)
 n_cols_aligned <- 3
 n_rows_aligned <- ceiling(n_plots_aligned / n_cols_aligned)
 grid.arrange(grobs = all_aligned_plots, ncol = n_cols_aligned, nrow = n_rows_aligned)
-```
 
-This visualization shows:
-
-- **Top-left panel**: The true population GRM with genotypes ordered by hierarchical clustering (similar genotypes are grouped together)
-- **Remaining panels**: Each sample GRM with the same ordering, where:
-  - **Colored regions**: Observed relationships
-  - **Gray regions**: Unobserved relationships (genotypes not in the study)
-  - Coverage percentage shows what fraction of the full GRM is observed
-
-The ordering reveals the population structure, and we can see which parts of the population structure each study captures.
-
-```{r coverage-by-block, fig.width=9, fig.height=4, out.width="100%", fig.alt="Heatmaps summarizing within- and between-population coverage percentages for every study."}
+## ----coverage-by-block, fig.width=9, fig.height=4, out.width="100%", fig.alt="Heatmaps summarizing within- and between-population coverage percentages for every study."----
 # Calculate coverage by population structure blocks
 # Define blocks based on subpopulation membership (after ordering)
 subpop_labels_ordered <- subpop_labels[hc$order]
@@ -491,59 +411,8 @@ ggplot(coverage_summary, aes(x = Pop2, y = Pop1, fill = Coverage)) +
     strip.text = element_text(face = "bold")
   ) +
   coord_equal()
-```
 
-This coverage analysis shows:
-
-- How well each study covers within-subpopulation relationships (diagonal blocks)
-- How well each study covers between-subpopulation relationships (off-diagonal blocks)
-- Studies 1-3 focus on individual subpopulations (high diagonal coverage)
-- Studies 4-6 cover pairs of subpopulations (two diagonal blocks)
-- Studies 7-10 provide more balanced coverage across all blocks
-
-# Summary
-
-We have generated a realistic simulation scenario with:
-
-- **`r n_total` genotypes** in the base population with realistic population structure (3 subpopulations)
-- **`r n_markers_total` markers** in the base population genetic data
-- **`r n_studies` independent studies**, each observing:
-  - Different subsets of genotypes (size range: `r min_genotypes_per_study`-`r max_genotypes_per_study`)
-  - Different marker panels (~`r n_markers_per_study` markers sampled from the base)
-  - Studies 1-3 focus on individual subpopulations with spillover
-  - Studies 4-6 target pairs of subpopulations
-  - Studies 7-10 sample across all subpopulations with intentional overlaps
-  - Van Raden GRMs calculated for each study from observed data only
-
-The heatmaps above show:
-1. The **true population GRM** (based on all `r n_markers_total` markers and all `r n_total` genotypes)
-2. **Ten study-specific GRMs**, each calculated on partial populations with partial marker information
-
-Key features of this simulation:
-- **Realistic sampling**: Each study observes only a subset of individuals and markers
-- **Population structure**: Studies follow subpopulation structure but with intentional overlaps
-- **Marker overlap**: ~40% of markers overlap between consecutive studies
-- **Genotype overlap**: Individuals sampled multiple times have higher probability in later studies
-
-The sample GRMs show realistic variation around the true relationships due to:
-- Finite marker sampling (each study uses ~15% of available markers)
-- Different marker sets across studies (with partial overlap)
-- Incomplete population sampling (each study observes ~40-70% of individuals)
-- Sampling variance in relationship estimation
-
-Now we will use CovCombR to combine these incomplete GRMs and recover the full population relationship matrix.
-
-# Combining GRMs with CovCombR
-
-## Prepare Data for CovCombR
-
-CovCombR expects covariance matrices scaled as Wishart sufficient statistics along with degrees of freedom. For GRMs:
-
-- Each sample GRM is already a covariance estimate
-- Degrees of freedom approximate the effective number of independent markers
-- We scale each GRM by its effective sample size
-
-```{r prepare-wishart-data}
+## ----prepare-wishart-data-----------------------------------------------------
 # For each study, prepare the Wishart-scale matrix and degrees of freedom
 # The GRM is already an estimate of the covariance, so we need to scale it
 # appropriately and provide degrees of freedom
@@ -578,13 +447,8 @@ for (k in 1:n_studies) {
     k, nrow(study_grms[[k]]), nu_vec[k]
   ))
 }
-```
 
-## Fit CovCombR Model
-
-Now we fit the CovCombR model to combine the incomplete GRMs. We use a small number of iterations for fast testing.
-
-```{r fit-wishart-em, fig.width=7, fig.height=4.5, out.width="90%", fig.alt="Line plot of CovCombR log-likelihood across EM iterations for the simulated GRM example."}
+## ----fit-wishart-em, fig.width=7, fig.height=4.5, out.width="90%", fig.alt="Line plot of CovCombR log-likelihood across EM iterations for the simulated GRM example."----
 # Fit CovCombR with reduced iterations for testing
 fit <- fit_covcomb(
   S_list = S_list_wishart,
@@ -653,13 +517,8 @@ cat(sprintf("  Dimensions: %d x %d\n", nrow(combined_grm_raw), ncol(combined_grm
 cat(sprintf("  Mean diagonal: %.3f\n", mean(diag(combined_grm_raw))))
 cat(sprintf("  Mean off-diagonal: %.3f\n", mean(combined_grm_raw[upper.tri(combined_grm_raw)])))
 cat(sprintf("  SD off-diagonal: %.3f\n", sd(combined_grm_raw[upper.tri(combined_grm_raw)])))
-```
 
-## Evaluate Recovery Quality
-
-Compare the CovCombR combined GRM to the true population GRM.
-
-```{r evaluate-recovery, fig.width=9, fig.height=8, out.width="100%", fig.alt="Heatmaps comparing the true GRM, CovCombR combined GRM, and residual differences across genotypes."}
+## ----evaluate-recovery, fig.width=9, fig.height=8, out.width="100%", fig.alt="Heatmaps comparing the true GRM, CovCombR combined GRM, and residual differences across genotypes."----
 # Create comparison visualization
 true_grm_plot <- plot_aligned_grm(
   true_grm,
@@ -787,11 +646,8 @@ grid.arrange(
   residual_plot, scatter_plot,
   ncol = 2, nrow = 2
 )
-```
 
-## Recovery Statistics
-
-```{r recovery-stats}
+## ----recovery-stats-----------------------------------------------------------
 # Calculate recovery statistics
 upper_tri_idx <- upper.tri(true_grm, diag = TRUE)
 
@@ -893,10 +749,7 @@ for (pop1 in 1:3) {
     }
   }
 }
-```
 
-# Session Information
-
-```{r session-info}
+## ----session-info-------------------------------------------------------------
 sessionInfo()
-```
+
