@@ -87,7 +87,7 @@ The free-$\boldsymbol{\Sigma}$ model is a special case of the factor model when 
 
 $$k_{\max} = \left\lfloor\frac{2p + 1 - \sqrt{8p+1}}{2}\right\rfloor$$
 
-For $p = 5$ this is $k_{\max} = 3$; for $p = 10$ it is $k_{\max} = 7$. Beyond $k_{\max}$ the factor model has at least as many free parameters as $\boldsymbol{\Sigma}$, and AIC/BIC will penalise the additional complexity.
+For $p = 5$ this is $k_{\max} = 2$; for $p = 10$ it is $k_{\max} = 6$. Beyond $k_{\max}$ the factor model has at least as many free parameters as $\boldsymbol{\Sigma}$, and AIC/BIC will penalise the additional complexity.
 
 ## Automatic Model Selection (`n_factors = "auto"`)
 
@@ -173,13 +173,13 @@ with default $\epsilon = 10^{-7}$ and maximum 500 iterations.
 
 Three methods are available (see `vignette("standard-errors")` for practical guidance):
 
-| Method | Speed | Accounts for EM uncertainty? |
-|--------|-------|------------------------------|
-| **plugin** | Fast | No — anti-conservative for imputed entries |
-| **bootstrap** | Slow | Yes — parametric Wishart resampling |
-| **sem** | Medium | Yes — via Meng–Rubin observed information |
+| Method | Speed | Accounts for EM uncertainty? | Factor models? |
+|--------|-------|------------------------------|-----------------|
+| **plugin** | Fast | No — anti-conservative for imputed entries | Yes |
+| **bootstrap** | Slow | Yes — parametric Wishart resampling | Yes |
+| **sem** | Medium | Yes — via Meng–Rubin observed information | No — free model only |
 
-For factor-model fits, plugin SEs use the Wishart variance formula with the estimated $\boldsymbol{\Sigma}$ and the per-pair coverage counts; they return `NA` for pairs with zero direct coverage. Bootstrap SEs are valid for all pairs when a factor model is used, because the bootstrap refits the same (identified) factor model on each replicate.
+For factor-model fits, plugin SEs use the Wishart variance formula with the estimated $\boldsymbol{\Sigma}$ and the per-pair coverage counts; they return `NA` for pairs with zero direct coverage. Bootstrap SEs are valid for all pairs when a factor model is used, because each bootstrap replicate refits the same k-factor model on the simulated data. `se_method = "sem"` is only supported for the free-$\boldsymbol{\Sigma}$ model ($n_{\text{factors}} = \code{NULL}$); the log-Cholesky-based observed-information derivation has not been extended to the constrained factor parameterisation, and \code{fit_covcomb()} raises an error if SEM is requested together with a factor model.
 
 # Parameter Counts and AIC/BIC
 

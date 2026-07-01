@@ -49,8 +49,13 @@ The method works by:
 1. Parameterizing Sigma via log-Cholesky to ensure positive definiteness
 2. Computing the complete-data information I_com from the Q function
 3. Estimating the EM rate matrix R via finite differences of the EM map
-4. Forming I_obs = I_com - I_com^(1/2) R I_com^(1/2)
+4. Forming I_obs = (I - R) \%*\% I_com (Meng & Rubin 1991, Dempster,
+   Laird & Rubin 1977: since R = I_mis * I_com^{-1} and
+   I_obs = I_com - I_mis, this gives I_obs = (I - R) * I_com)
 5. Computing SEs via delta method back to Sigma scale
+
+Only supported for the free-\eqn{\Sigma} model; not implemented for the
+constrained k-factor parameterization.
 }
 \references{
 Meng, X. L., & Rubin, D. B. (1991). Using EM to obtain asymptotic

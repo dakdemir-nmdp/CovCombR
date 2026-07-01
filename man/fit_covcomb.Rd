@@ -11,7 +11,8 @@ fit_covcomb(
   alpha_normalization = "geometric",
   init_sigma = "identity",
   control = list(),
-  se_method = "plugin"
+  se_method = "plugin",
+  n_factors = "auto"
 )
 }
 \arguments{
@@ -60,6 +61,27 @@ This parameter is ignored when \code{scale_method = "none"}.}
 
 \item{se_method}{Standard error method: \code{"none"}, \code{"plugin"} (default),
 \code{"bootstrap"}, or \code{"sem"} (experimental).}
+
+\item{n_factors}{Number of latent factors for the covariance model. Controls
+how the combined covariance is parameterized:
+\itemize{
+  \item \code{"auto"} (default): Automatically selects the number of factors by
+        fitting models for \eqn{k = 1, 2, \ldots, k_{\max}} plus the unconstrained
+        free-\eqn{\Sigma} model, then choosing the best by BIC (or AIC if
+        \code{control$ic = "AIC"}). The selected model and an \code{ic_table}
+        are returned. \strong{Recommended for most users.}
+  \item Integer \eqn{k \geq 1}: Fit a k-factor model
+        \eqn{\Sigma = \Lambda\Lambda^\top + \Psi} with Rubin-Thayer EM.
+        Factor models identify covariances between variables that are never
+        jointly observed in any study, provided they share factors through
+        overlapping variables.
+  \item \code{NULL} or \code{"free"}: Fit the unconstrained free-\eqn{\Sigma}
+        model. This is the original CovCombR algorithm. It is only identifiable
+        when every variable pair \eqn{(i,j)} is jointly observed in at least
+        one study. Use with caution on chain-pattern designs.
+}
+The saturation point (beyond which additional factors add no new parameters
+relative to free-\eqn{\Sigma}) is \eqn{k_{\max} = \lfloor(2p+1-\sqrt{8p+1})/2\rfloor}.}
 }
 \value{
 Object of class \code{covcomb} containing:
@@ -96,6 +118,16 @@ Object of class \code{covcomb} containing:
     \item \code{log_likelihood_per_df}: Normalized log-likelihood per degree of freedom
           (interpretable metric for comparing models across different sample sizes)
   }}
+\item{model}{Character string: \code{"factor"} for a k-factor fit,
+  \code{"free"} for the unconstrained model (set when \code{n_factors = NULL}).}
+\item{n_factors}{Integer number of factors, or \code{NA} for the free model.}
+\item{Lambda_hat}{p x k factor loadings matrix (varimax-rotated), present when
+  a factor model was fitted.}
+\item{Psi_hat}{Length-p vector of unique variances, present when a factor model
+  was fitted.}
+\item{ic_table}{Data frame comparing all candidate models when
+  \code{n_factors = "auto"}, with columns \code{n_factors}, \code{loglik},
+  \code{n_params}, \code{AIC}, \code{BIC}, \code{selected}.}
 \item{call}{Matched call}
 }
 \description{

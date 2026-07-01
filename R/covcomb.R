@@ -403,23 +403,51 @@ fit_covcomb <- function(S_list, nu,
   # Dispatch to factor model if n_factors requested
   if (!is.null(n_factors)) {
     if (identical(n_factors, "auto")) {
-      return(.fit_fa_auto(
+      fa_result <- .fit_fa_auto(
         S_list = S_list, nu = nu,
         scale_method = scale_method,
         alpha_normalization = alpha_normalization,
         init_sigma = init_sigma,
         control = control
-      ))
+      )
     } else {
       k <- as.integer(n_factors)
-      return(fit_fa_em(
+      fa_result <- fit_fa_em(
         S_list = S_list, nu = nu, k = k,
         scale_method = scale_method,
         alpha_normalization = alpha_normalization,
         init_sigma = init_sigma,
         control = control
-      ))
+      )
     }
+
+    fa_result$se_method <- se_method
+    fa_result$call <- call
+
+    # Recompute controls and coverage for SE computation (fit_fa_em/.fit_fa_auto
+    # don't expose these, so we rebuild them the same way fit_covcomb does below)
+    ctrl <- list(max_iter = 500, tol = 1e-7, ridge = 1e-8, min_eigen = 1e-10)
+    ctrl[names(control)] <- control
+    internal_data_fa <- .preprocess_data(S_list, nu, scale_method, alpha_normalization)
+    coverage_mat_fa <- .compute_coverage(internal_data_fa)
+
+    se_n_factors <- if (identical(fa_result$model, "factor")) fa_result$n_factors else NULL
+
+    fa_result <- .attach_se(
+      fa_result,
+      se_method = se_method,
+      S_list = S_list,
+      nu = nu,
+      scale_method = scale_method,
+      alpha_normalization = alpha_normalization,
+      init_sigma = init_sigma,
+      control = control,
+      ctrl = ctrl,
+      coverage_mat = coverage_mat_fa,
+      n_factors = se_n_factors
+    )
+
+    return(fa_result)
   }
 
   # Validate inputs
@@ -594,7 +622,49 @@ fit_covcomb <- function(S_list, nu,
     call = call
   )
 
-  # Compute standard errors
+  result <- .attach_se(
+    result,
+    se_method = se_method,
+    S_list = S_list,
+    nu = nu,
+    scale_method = scale_method,
+    alpha_normalization = alpha_normalization,
+    init_sigma = init_sigma,
+    control = control,
+    ctrl = ctrl,
+    coverage_mat = coverage_mat,
+    n_factors = NULL
+  )
+
+  structure(result, class = "covcomb")
+}
+
+#' Attach Standard Errors to a Fitted covcomb Result
+#'
+#' @description
+#' Shared SE-computation logic used by both the free-\eqn{\Sigma} fitting path
+#' and the k-factor fitting path in \code{fit_covcomb()}. Computes plugin,
+#' bootstrap, or SEM standard errors and attaches them (plus any diagnostic
+#' metadata) to the result list.
+#'
+#' @param result Partially built \code{covcomb} result list (must contain at
+#'   least \code{Sigma_hat}, \code{alpha_hat}, \code{S_hat_scale}).
+#' @param n_factors Number of factors used for the fit (\code{NULL} for the
+#'   free model, an integer for a k-factor model). Used so that bootstrap
+#'   replicates refit the same model class as the original fit. SEM is only
+#'   supported for the free model (\code{n_factors = NULL}).
+#' @inheritParams fit_covcomb
+#' @param ctrl Fully-resolved control list (defaults merged in).
+#' @param coverage_mat Coverage matrix required for plugin SEs.
+#'
+#' @keywords internal
+.attach_se <- function(result, se_method, S_list, nu, scale_method,
+                       alpha_normalization, init_sigma, control, ctrl,
+                       coverage_mat, n_factors = NULL) {
+  if (se_method == "none") {
+    return(result)
+  }
+
   if (se_method == "plugin") {
     result$Sigma_se <- compute_se_plugin(result$Sigma_hat, coverage_mat)
     # Warn about plugin SE limitations
@@ -614,7 +684,8 @@ fit_covcomb <- function(S_list, nu,
       control = control,
       bootstrap_ctrl = ctrl$bootstrap,
       Sigma_hat = result$Sigma_hat,
-      alpha_hat = result$alpha_hat
+      alpha_hat = result$alpha_hat,
+      n_factors = n_factors
     )
     result$Sigma_se <- boot_res$Sigma_se
     result$bootstrap <- boot_res$meta
@@ -622,6 +693,17 @@ fit_covcomb <- function(S_list, nu,
       result$bootstrap_samples <- boot_res$samples
     }
   } else if (se_method == "sem") {
+    if (!is.null(n_factors)) {
+      stop(
+        "se_method = 'sem' is only supported for the free-Sigma model ",
+        "(n_factors = NULL). The SEM asymptotic-information derivation has ",
+        "not been extended to the constrained factor parameterization. ",
+        "Use se_method = 'plugin' or 'bootstrap' with a factor model, or ",
+        "fit with n_factors = NULL to use SEM.",
+        call. = FALSE
+      )
+    }
+
     message(
       "Note: SEM standard errors are experimental. ",
       "They provide fast asymptotic approximations but may be unreliable ",
@@ -656,7 +738,7 @@ fit_covcomb <- function(S_list, nu,
     result$S_hat_se <- result$S_hat_scale * result$Sigma_se
   }
 
-  structure(result, class = "covcomb")
+  result
 }
 
 # -- Internal Functions --------------------------------

@@ -13,7 +13,8 @@ compute_se_bootstrap(
   control = list(),
   bootstrap_ctrl = list(),
   Sigma_hat,
-  alpha_hat = NULL
+  alpha_hat = NULL,
+  n_factors = NULL
 )
 }
 \arguments{
@@ -34,6 +35,12 @@ compute_se_bootstrap(
 \item{Sigma_hat}{Converged estimate of the covariance matrix}
 
 \item{alpha_hat}{Converged estimates of scale factors (if scale_method = "estimate")}
+
+\item{n_factors}{Number of factors used in the original fit (\code{NULL}
+for the free-\eqn{\Sigma} model, or an integer \code{k} for a k-factor
+model). Each bootstrap replicate refits the same model class so that the
+bootstrap variance reflects uncertainty in the model actually used,
+rather than always refitting the unconstrained free model.}
 }
 \value{
 A list with components:

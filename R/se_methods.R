@@ -21,6 +21,11 @@
 #' @param bootstrap_ctrl Bootstrap control parameters (B, seed, progress, etc.)
 #' @param Sigma_hat Converged estimate of the covariance matrix
 #' @param alpha_hat Converged estimates of scale factors (if scale_method = "estimate")
+#' @param n_factors Number of factors used in the original fit (\code{NULL}
+#'   for the free-\eqn{\Sigma} model, or an integer \code{k} for a k-factor
+#'   model). Each bootstrap replicate refits the same model class so that the
+#'   bootstrap variance reflects uncertainty in the model actually used,
+#'   rather than always refitting the unconstrained free model.
 #'
 #' @return A list with components:
 #'   \item{Sigma_se}{Matrix of standard errors for Sigma_hat}
@@ -31,7 +36,7 @@
 compute_se_bootstrap <- function(S_list, nu, scale_method = "none",
                                  alpha_normalization = "geometric", init_sigma = NULL,
                                  control = list(), bootstrap_ctrl = list(),
-                                 Sigma_hat, alpha_hat = NULL) {
+                                 Sigma_hat, alpha_hat = NULL, n_factors = NULL) {
   if (length(S_list) == 0L) {
     stop("Bootstrap requires at least one sample.", call. = FALSE)
   }
@@ -147,15 +152,28 @@ compute_se_bootstrap <- function(S_list, nu, scale_method = "none",
     nu_boot <- nu[sample_names]
 
     fit_boot <- tryCatch(
-      fit_covcomb(
-        S_list = S_boot,
-        nu = nu_boot,
-        scale_method = scale_method,
-        alpha_normalization = alpha_normalization,
-        init_sigma = init_sigma_boot,
-        control = control_boot,
-        se_method = "none"
-      ),
+      if (is.null(n_factors)) {
+        fit_covcomb(
+          S_list = S_boot,
+          nu = nu_boot,
+          scale_method = scale_method,
+          alpha_normalization = alpha_normalization,
+          init_sigma = init_sigma_boot,
+          control = control_boot,
+          se_method = "none",
+          n_factors = NULL
+        )
+      } else {
+        fit_fa_em(
+          S_list = S_boot,
+          nu = nu_boot,
+          k = n_factors,
+          scale_method = scale_method,
+          alpha_normalization = alpha_normalization,
+          init_sigma = init_sigma_boot,
+          control = control_boot
+        )
+      },
       error = function(e) {
         if (verbose) {
           message(sprintf("Bootstrap replicate %d failed: %s", b, e$message))
@@ -349,8 +367,13 @@ jacobian_logchol_to_sigma <- function(theta) {
 #' 1. Parameterizing Sigma via log-Cholesky to ensure positive definiteness
 #' 2. Computing the complete-data information I_com from the Q function
 #' 3. Estimating the EM rate matrix R via finite differences of the EM map
-#' 4. Forming I_obs = I_com - I_com^(1/2) R I_com^(1/2)
+#' 4. Forming I_obs = (I - R) \%*\% I_com (Meng & Rubin 1991, Dempster,
+#'    Laird & Rubin 1977: since R = I_mis * I_com^{-1} and
+#'    I_obs = I_com - I_mis, this gives I_obs = (I - R) * I_com)
 #' 5. Computing SEs via delta method back to Sigma scale
+#'
+#' Only supported for the free-\eqn{\Sigma} model; not implemented for the
+#' constrained k-factor parameterization.
 #'
 #' @param fit_result Result from fit_covcomb containing Sigma_hat, alpha_hat
 #' @param S_list Original list of sample covariance matrices
