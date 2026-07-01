@@ -191,15 +191,16 @@ test_that("M-step averaging formula is exact for complete data", {
   # Manual calculation: weighted average of sample covariances
   Sigma_manual <- (nu1*S1 + nu2*S2 + nu3*S3) / (nu1 + nu2 + nu3)
   
-  # Via EM
+  # Via EM (free model: exact closed-form M-step is a weighted average)
   fit <- fit_covcomb(
     S_list = list(s1 = S1, s2 = S2, s3 = S3),
     nu = c(s1 = nu1, s2 = nu2, s3 = nu3),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "none",
     control = list(convergence = "loglik")
   )
-  
+
   # Should match exactly
   expect_equal(fit$Sigma_hat, Sigma_manual, tolerance = 1e-12)
 })

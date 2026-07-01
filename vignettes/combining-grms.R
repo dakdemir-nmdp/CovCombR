@@ -123,8 +123,7 @@ for (i in 1:n_studies) {
 colnames(genotype_overlap_matrix) <- paste0("S", 1:n_studies)
 rownames(genotype_overlap_matrix) <- paste0("S", 1:n_studies)
 
-cat("\nGenotype overlap between studies:\n")
-print(genotype_overlap_matrix)
+genotype_overlap_matrix
 
 # Calculate pairwise marker overlap between studies
 marker_overlap_matrix <- matrix(0, n_studies, n_studies)
@@ -140,37 +139,27 @@ for (i in 1:n_studies) {
 colnames(marker_overlap_matrix) <- paste0("S", 1:n_studies)
 rownames(marker_overlap_matrix) <- paste0("S", 1:n_studies)
 
-cat("\nMarker overlap between studies:\n")
-print(marker_overlap_matrix)
+marker_overlap_matrix
 
-cat("\nStudy coverage statistics:\n")
 all_genotypes_covered <- unique(unlist(study_genotypes))
-cat(sprintf(
-  "  Genotypes: %d / %d covered (%.1f%%)\n",
-  length(all_genotypes_covered), n_total,
-  100 * length(all_genotypes_covered) / n_total
-))
+genotype_frequency     <- table(unlist(study_genotypes))
+all_markers_used       <- unique(unlist(study_markers))
+marker_frequency       <- table(unlist(study_markers))
 
-genotype_frequency <- table(unlist(study_genotypes))
-cat(sprintf(
-  "  Mean studies per genotype: %.1f (range: %d-%d)\n",
-  mean(genotype_frequency),
-  min(genotype_frequency), max(genotype_frequency)
-))
-
-all_markers_used <- unique(unlist(study_markers))
-cat(sprintf(
-  "  Markers: %d / %d used (%.1f%%)\n",
-  length(all_markers_used), n_markers_base_sim,
-  100 * length(all_markers_used) / n_markers_base_sim
-))
-
-marker_frequency <- table(unlist(study_markers))
-cat(sprintf(
-  "  Mean studies per marker: %.1f (range: %d-%d)\n",
-  mean(marker_frequency),
-  min(marker_frequency), max(marker_frequency)
-))
+data.frame(
+  Quantity = c("Genotypes covered", "Mean studies per genotype",
+               "Markers used", "Mean studies per marker"),
+  Value = c(
+    sprintf("%d / %d (%.1f%%)", length(all_genotypes_covered), n_total,
+            100 * length(all_genotypes_covered) / n_total),
+    sprintf("%.1f (range: %d-%d)", mean(genotype_frequency),
+            min(genotype_frequency), max(genotype_frequency)),
+    sprintf("%d / %d (%.1f%%)", length(all_markers_used), n_markers_base_sim,
+            100 * length(all_markers_used) / n_markers_base_sim),
+    sprintf("%.1f (range: %d-%d)", mean(marker_frequency),
+            min(marker_frequency), max(marker_frequency))
+  )
+)
 
 ## ----compare-relationships, fig.width=7, fig.height=5, out.width="90%"--------
 # Find genotypes that appear in at least 3 studies
@@ -220,32 +209,30 @@ if (length(well_sampled_genotypes) >= 10) {
   comparison_df <- do.call(rbind, comparison_data)
 
   # Plot: True vs Estimated
-  ggplot(comparison_df, aes(x = True_Relationship, y = Estimated_Relationship)) +
-    geom_point(alpha = 0.6, size = 2) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
-    labs(
-      title = "Sample GRM vs True GRM",
-      subtitle = "Relationships between well-sampled genotype pairs",
-      x = "True Relationship (Population GRM)",
-      y = "Estimated Relationship (Study GRM)"
-    ) +
-    theme_minimal() +
-    theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  print(
+    ggplot(comparison_df, aes(x = True_Relationship, y = Estimated_Relationship)) +
+      geom_point(alpha = 0.6, size = 2) +
+      geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+      labs(
+        title = "Sample GRM vs True GRM",
+        subtitle = "Relationships between well-sampled genotype pairs",
+        x = "True Relationship (Population GRM)",
+        y = "Estimated Relationship (Study GRM)"
+      ) +
+      theme_minimal() +
+      theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+  )
 
-  cat("\nComparison statistics:\n")
-  cat(sprintf(
-    "  Number of genotype pairs compared: %d\n",
-    nrow(comparison_df)
-  ))
-  cat(sprintf("  RMSE: %.4f\n", sqrt(mean(comparison_df$Error^2))))
-  cat(sprintf("  MAE: %.4f\n", mean(abs(comparison_df$Error))))
-  cat(sprintf(
-    "  Correlation: %.4f\n",
-    cor(
-      comparison_df$True_Relationship,
-      comparison_df$Estimated_Relationship
+  data.frame(
+    Statistic = c("Genotype pairs compared", "RMSE", "MAE", "Correlation"),
+    Value = c(
+      nrow(comparison_df),
+      round(sqrt(mean(comparison_df$Error^2)), 4),
+      round(mean(abs(comparison_df$Error)), 4),
+      round(cor(comparison_df$True_Relationship,
+                comparison_df$Estimated_Relationship), 4)
     )
-  ))
+  )
 }
 
 ## ----aligned-grm-viz, fig.width=9, fig.height=18, out.width="100%", fig.alt="Aligned heatmaps showing observed and missing entries for each study GRM alongside the true GRM."----
@@ -440,23 +427,29 @@ nu_vec <- sapply(1:n_studies, function(k) {
 })
 names(nu_vec) <- paste0("Study", 1:n_studies)
 
-cat("Prepared data for CovCombR:\n")
-for (k in 1:n_studies) {
-  cat(sprintf(
-    "  Study %2d: %d genotypes, nu = %d\n",
-    k, nrow(study_grms[[k]]), nu_vec[k]
-  ))
-}
+data.frame(
+  Study     = 1:n_studies,
+  Genotypes = sapply(study_grms, nrow),
+  nu        = nu_vec
+)
 
 ## ----fit-wishart-em, fig.width=7, fig.height=4.5, out.width="90%", fig.alt="Line plot of CovCombR log-likelihood across EM iterations for the simulated GRM example."----
-# Fit CovCombR with reduced iterations for testing
+# Fit CovCombR with a 3-factor model matching the 3-subpopulation structure.
+# At p = 1000 genotypes, n_factors = "auto" (the package default) would search
+# k = 1...k_max ≈ 955, which is computationally infeasible. We fix k = 3 to
+# match the known number of subpopulations and keep runtime tractable (~3 min).
+# This also addresses identifiability: many genotype pairs are never jointly
+# observed across studies, so the free model (n_factors = NULL) leaves those
+# entries determined by initialization alone. Three latent factors tie all
+# genotypes together through the shared population-structure loadings.
 fit <- fit_covcomb(
   S_list = S_list_wishart,
   nu = nu_vec,
+  n_factors = 3,
   init_sigma = "identity",
   scale_method = "none",
   control = list(
-    max_iter = 50, # Small number for fast testing
+    max_iter = 50,
     tol = 1e-5,
     ridge = 1e-6
   ),
@@ -486,23 +479,20 @@ true_mean_diag <- mean(diag(true_grm))
 combined_mean_diag <- mean(diag(combined_grm_raw))
 scale_factor <- true_mean_diag / combined_mean_diag
 
-cat("\nRescaling combined GRM:\n")
-cat(sprintf("  True GRM mean diagonal: %.4f\n", true_mean_diag))
-cat(sprintf("  Combined GRM mean diagonal (before rescaling): %.4f\n", combined_mean_diag))
-cat(sprintf("  Scale factor applied: %.4f\n", scale_factor))
+data.frame(
+  Quantity = c("True GRM mean diagonal",
+               "Combined GRM mean diagonal (before rescaling)",
+               "Scale factor applied"),
+  Value = round(c(true_mean_diag, combined_mean_diag, scale_factor), 4)
+)
 
 combined_grm_raw <- combined_grm_raw * scale_factor
 
-cat(sprintf("  Combined GRM mean diagonal (after rescaling): %.4f\n", mean(diag(combined_grm_raw))))
+mean(diag(combined_grm_raw))  # mean diagonal after rescaling
 
 # Check which genotypes are in the combined GRM
 combined_genotype_ids <- rownames(combined_grm_raw)
-
-cat("\nCombined GRM coverage:\n")
-cat(sprintf(
-  "  Genotypes in combined GRM: %d / %d\n",
-  length(combined_genotype_ids), n_total
-))
+length(combined_genotype_ids)  # genotypes in combined GRM (of n_total)
 
 # Create full population matrix, filling in with NA for unobserved genotypes
 combined_grm <- matrix(NA, n_total, n_total)
@@ -512,11 +502,15 @@ colnames(combined_grm) <- genotype_ids
 # Fill in observed genotypes
 combined_grm[combined_genotype_ids, combined_genotype_ids] <- combined_grm_raw
 
-cat("\nCombined GRM statistics (observed genotypes only):\n")
-cat(sprintf("  Dimensions: %d x %d\n", nrow(combined_grm_raw), ncol(combined_grm_raw)))
-cat(sprintf("  Mean diagonal: %.3f\n", mean(diag(combined_grm_raw))))
-cat(sprintf("  Mean off-diagonal: %.3f\n", mean(combined_grm_raw[upper.tri(combined_grm_raw)])))
-cat(sprintf("  SD off-diagonal: %.3f\n", sd(combined_grm_raw[upper.tri(combined_grm_raw)])))
+data.frame(
+  Statistic = c("Dimensions", "Mean diagonal", "Mean off-diagonal", "SD off-diagonal"),
+  Value = c(
+    sprintf("%d x %d", nrow(combined_grm_raw), ncol(combined_grm_raw)),
+    sprintf("%.3f", mean(diag(combined_grm_raw))),
+    sprintf("%.3f", mean(combined_grm_raw[upper.tri(combined_grm_raw)])),
+    sprintf("%.3f", sd(combined_grm_raw[upper.tri(combined_grm_raw)]))
+  )
+)
 
 ## ----evaluate-recovery, fig.width=9, fig.height=8, out.width="100%", fig.alt="Heatmaps comparing the true GRM, CovCombR combined GRM, and residual differences across genotypes."----
 # Create comparison visualization
@@ -602,11 +596,8 @@ scatter_data <- data.frame(
 # Remove NA values (should only be unobserved genotypes)
 scatter_data <- scatter_data[!is.na(scatter_data$Combined), ]
 
-# Print counts for each category
-cat("\nScatter plot point counts:\n")
-cat(sprintf("  Diagonal: %d\n", sum(scatter_data$Type == "Diagonal", na.rm = TRUE)))
-cat(sprintf("  Observed (off-diagonal): %d\n", sum(scatter_data$Type == "Observed (off-diagonal)", na.rm = TRUE)))
-cat(sprintf("  Unobserved (imputed): %d\n", sum(scatter_data$Type == "Unobserved (imputed)", na.rm = TRUE)))
+# Counts for each category
+table(scatter_data$Type)
 
 # Define colors for each category
 type_colors <- c(
@@ -651,83 +642,33 @@ grid.arrange(
 # Calculate recovery statistics
 upper_tri_idx <- upper.tri(true_grm, diag = TRUE)
 
+recovery_stats <- function(idx) {
+  c(
+    N      = sum(idx),
+    Pct    = round(100 * sum(idx) / sum(upper_tri_idx), 1),
+    RMSE   = round(sqrt(mean((combined_grm[idx] - true_grm[idx])^2, na.rm = TRUE)), 4),
+    MAE    = round(mean(abs(combined_grm[idx] - true_grm[idx]), na.rm = TRUE), 4),
+    Cor    = round(cor(combined_grm[idx], true_grm[idx], use = "complete.obs"), 4)
+  )
+}
+
 # Overall statistics (only for genotypes present in combined GRM)
 valid_idx <- upper_tri_idx & !is.na(combined_grm)
-cat("Overall Recovery Statistics (genotypes in combined GRM):\n")
-cat(sprintf(
-  "  N pairs: %d (%.1f%% of total)\n",
-  sum(valid_idx),
-  100 * sum(valid_idx) / sum(upper_tri_idx)
-))
-cat(sprintf(
-  "  RMSE: %.4f\n",
-  sqrt(mean((combined_grm[valid_idx] - true_grm[valid_idx])^2, na.rm = TRUE))
-))
-cat(sprintf(
-  "  MAE: %.4f\n",
-  mean(abs(combined_grm[valid_idx] - true_grm[valid_idx]), na.rm = TRUE)
-))
-cat(sprintf(
-  "  Correlation: %.4f\n",
-  cor(combined_grm[valid_idx], true_grm[valid_idx], use = "complete.obs")
-))
 
 # Separate statistics for observed vs unobserved pairs
 # Note: observed_pairs was already computed in the evaluate-recovery chunk
-observed_idx <- observed_pairs & upper_tri_idx
-unobserved_idx <- (!observed_pairs) & upper_tri_idx
+observed_valid   <- observed_pairs & upper_tri_idx & !is.na(combined_grm)
+unobserved_valid <- (!observed_pairs) & upper_tri_idx & !is.na(combined_grm)
 
-# Additionally filter out NA values (genotypes not in any study)
-# combined_grm may have NA for genotypes never observed
-observed_valid <- observed_idx & !is.na(combined_grm)
-unobserved_valid <- unobserved_idx & !is.na(combined_grm)
-
-if (sum(observed_valid) > 0) {
-  cat("\nObserved Pairs (in at least one study):\n")
-  cat(sprintf(
-    "  N pairs: %d (%.1f%%)\n",
-    sum(observed_valid),
-    100 * sum(observed_valid) / sum(upper_tri_idx)
-  ))
-  cat(sprintf(
-    "  RMSE: %.4f\n",
-    sqrt(mean((combined_grm[observed_valid] - true_grm[observed_valid])^2, na.rm = TRUE))
-  ))
-  cat(sprintf(
-    "  MAE: %.4f\n",
-    mean(abs(combined_grm[observed_valid] - true_grm[observed_valid]), na.rm = TRUE)
-  ))
-  cat(sprintf(
-    "  Correlation: %.4f\n",
-    cor(combined_grm[observed_valid], true_grm[observed_valid], use = "complete.obs")
-  ))
-}
-
-if (sum(unobserved_valid) > 0) {
-  cat("\nUnobserved Pairs (never jointly observed, but both genotypes in studies):\n")
-  cat(sprintf(
-    "  N pairs: %d (%.1f%%)\n",
-    sum(unobserved_valid),
-    100 * sum(unobserved_valid) / sum(upper_tri_idx)
-  ))
-  cat(sprintf(
-    "  RMSE: %.4f\n",
-    sqrt(mean((combined_grm[unobserved_valid] - true_grm[unobserved_valid])^2, na.rm = TRUE))
-  ))
-  cat(sprintf(
-    "  MAE: %.4f\n",
-    mean(abs(combined_grm[unobserved_valid] - true_grm[unobserved_valid]), na.rm = TRUE)
-  ))
-  cat(sprintf(
-    "  Correlation: %.4f\n",
-    cor(combined_grm[unobserved_valid], true_grm[unobserved_valid], use = "complete.obs")
-  ))
-}
+rbind(
+  Overall    = recovery_stats(valid_idx),
+  Observed   = if (sum(observed_valid) > 0) recovery_stats(observed_valid) else NA,
+  Unobserved = if (sum(unobserved_valid) > 0) recovery_stats(unobserved_valid) else NA
+)
 
 # Statistics by subpopulation blocks
-cat("\nRecovery by Population Structure Blocks:\n")
-for (pop1 in 1:3) {
-  for (pop2 in pop1:3) {
+block_stats <- do.call(rbind, lapply(1:3, function(pop1) {
+  do.call(rbind, lapply(pop1:3, function(pop2) {
     idx1 <- which(subpop_labels == pop1)
     idx2 <- which(subpop_labels == pop2)
 
@@ -735,20 +676,19 @@ for (pop1 in 1:3) {
     block_mask[idx1, idx2] <- TRUE
     block_mask[idx2, idx1] <- TRUE
 
-    block_idx <- block_mask & upper_tri_idx
-    block_valid <- block_idx & !is.na(combined_grm)
+    block_valid <- block_mask & upper_tri_idx & !is.na(combined_grm)
+    if (sum(block_valid) == 0) return(NULL)
 
-    if (sum(block_valid) > 0) {
-      block_rmse <- sqrt(mean((combined_grm[block_valid] - true_grm[block_valid])^2, na.rm = TRUE))
-      block_cor <- cor(combined_grm[block_valid], true_grm[block_valid], use = "complete.obs")
+    data.frame(
+      Block = sprintf("Pop%d-Pop%d", pop1, pop2),
+      N     = sum(block_valid),
+      RMSE  = round(sqrt(mean((combined_grm[block_valid] - true_grm[block_valid])^2, na.rm = TRUE)), 4),
+      Cor   = round(cor(combined_grm[block_valid], true_grm[block_valid], use = "complete.obs"), 4)
+    )
+  }))
+}))
 
-      cat(sprintf(
-        "  Pop%d-Pop%d: N=%d, RMSE=%.4f, Cor=%.4f\n",
-        pop1, pop2, sum(block_valid), block_rmse, block_cor
-      ))
-    }
-  }
-}
+block_stats
 
 ## ----session-info-------------------------------------------------------------
 sessionInfo()

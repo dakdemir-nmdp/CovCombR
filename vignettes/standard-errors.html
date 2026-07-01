@@ -9,11 +9,11 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
-<meta name="author" content="CovCombR Package" />
+<meta name="author" content="Deniz Akdemir" />
 
-<meta name="date" content="2026-06-30" />
+<meta name="date" content="2026-07-01" />
 
-<title>Combining Incomplete Covariance Matrices: Iris Example</title>
+<title>Standard Errors and Statistical Inference</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -350,294 +350,397 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Combining Incomplete Covariance Matrices:
-Iris Example</h1>
-<h4 class="author">CovCombR Package</h4>
-<h4 class="date">2026-06-30</h4>
+<h1 class="title toc-ignore">Standard Errors and Statistical
+Inference</h1>
+<h4 class="author">Deniz Akdemir</h4>
+<h4 class="date">2026-07-01</h4>
 
 </div>
 
-<div id="TOC">
-<ul>
-<li><a href="#introduction" id="toc-introduction">Introduction</a></li>
-<li><a href="#example-with-iris-data" id="toc-example-with-iris-data">Example with Iris Data</a></li>
-<li><a href="#more-realistic-scenario-different-sample-sizes" id="toc-more-realistic-scenario-different-sample-sizes">More Realistic
-Scenario: Different Sample Sizes</a></li>
-<li><a href="#bootstrap-standard-errors" id="toc-bootstrap-standard-errors">Bootstrap Standard Errors</a></li>
-<li><a href="#summary" id="toc-summary">Summary</a></li>
-<li><a href="#references" id="toc-references">References</a></li>
-<li><a href="#session-information" id="toc-session-information">Session
-Information</a></li>
-</ul>
-</div>
 
-<div id="introduction" class="section level2">
-<h2>Introduction</h2>
-<p>This vignette demonstrates how to use the <code>CovCombR</code>
-package to combine incomplete covariance matrices using the classic iris
-dataset. Different studies measure different subsets of variables;
-CovCombR recovers the full covariance structure from these partial
-observations.</p>
-<div id="the-problem" class="section level3">
-<h3>The Problem</h3>
-<p>Suppose three studies each measure a different pair of iris
-variables:</p>
-<ul>
-<li>Study 1: Sepal.Length and Sepal.Width</li>
-<li>Study 2: Sepal.Length and Petal.Length</li>
-<li>Study 3: Sepal.Width and Petal.Width</li>
-</ul>
-<p>The pairs (Sepal.Width, Petal.Length), (Petal.Length, Petal.Width),
-and (Sepal.Length, Petal.Width) are never jointly observed. With the
-<strong>free-Σ model</strong> those covariances would be unidentified.
-With the <strong>factor model</strong> they can be recovered through
-shared relationships across the overlapping variables — which is why
-CovCombR defaults to automatic factor-model selection.</p>
+<div id="overview" class="section level2">
+<h2>Overview</h2>
+<p>Standard errors (SEs) quantify uncertainty in your combined
+covariance estimates. CovCombR offers three SE methods, each with
+distinct trade-offs:</p>
+<table>
+<colgroup>
+<col width="21%" />
+<col width="18%" />
+<col width="34%" />
+<col width="26%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Method</th>
+<th>Speed</th>
+<th>Reliability</th>
+<th>Best For</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>plugin</strong></td>
+<td>Fast (seconds)</td>
+<td>Anti-conservative</td>
+<td>Quick diagnostics</td>
+</tr>
+<tr class="even">
+<td><strong>bootstrap</strong></td>
+<td>Slow (minutes)</td>
+<td>Most reliable</td>
+<td>Publication, inference</td>
+</tr>
+<tr class="odd">
+<td><strong>sem</strong></td>
+<td>Medium</td>
+<td>Experimental</td>
+<td>Large problems (validate!)</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Key insight:</strong> The default
+<code>n_factors = &quot;auto&quot;</code> selects an identifiable model before
+computing SEs. For variable pairs that were never jointly observed, even
+the bootstrap SE is valid only when the underlying covariance is
+identified — which requires a factor model when the free-Σ model is not
+identified.</p>
+<hr />
 </div>
-</div>
-<div id="example-with-iris-data" class="section level2">
-<h2>Example with Iris Data</h2>
-<div id="load-and-prepare" class="section level3">
-<h3>Load and Prepare</h3>
-<pre class="r"><code>library(CovCombR)
-data(iris)
-colnames(iris) &lt;- c(&quot;S.L&quot;, &quot;S.W&quot;, &quot;P.L&quot;, &quot;P.W&quot;, &quot;Species&quot;)
-iris_virginica &lt;- iris[iris$Species == &quot;virginica&quot;, ]
-nrow(iris_virginica)</code></pre>
-<pre><code>## [1] 50</code></pre>
-</div>
-<div id="create-incomplete-covariance-matrices" class="section level3">
-<h3>Create Incomplete Covariance Matrices</h3>
-<pre class="r"><code>set.seed(1234)
-
-CovList &lt;- list(
-  Study1 = cov(iris_virginica[sample(1:50, 20), c(1, 2)]),  # Sepal measurements
-  Study2 = cov(iris_virginica[sample(1:50, 25), c(1, 3)]),  # Sepal.L + Petal.L
-  Study3 = cov(iris_virginica[sample(1:50, 30), c(2, 4)])   # Sepal.W + Petal.W
-)
-
-CovList</code></pre>
-<pre><code>## $Study1
-##            S.L        S.W
-## S.L 0.26463158 0.03821053
-## S.W 0.03821053 0.06168421
-## 
-## $Study2
-##           S.L       P.L
-## S.L 0.4572667 0.3614833
-## P.L 0.3614833 0.3531000
-## 
-## $Study3
-##            S.W        P.W
-## S.W 0.14654023 0.06673563
-## P.W 0.06673563 0.07843678</code></pre>
-<p>The missing covariances (Sepal.Width–Petal.Length,
-Petal.Length–Petal.Width, Sepal.Length–Petal.Width) are never jointly
-observed.</p>
-</div>
-<div id="fit-the-model" class="section level3">
-<h3>Fit the Model</h3>
-<p>The default <code>n_factors = &quot;auto&quot;</code> automatically selects an
-appropriate factor model and returns the selected fit alongside a table
-of all candidates.</p>
-<pre class="r"><code>nu &lt;- c(Study1 = 19, Study2 = 24, Study3 = 29)
-
-fit &lt;- fit_covcomb(CovList, nu = nu, se_method = &quot;none&quot;)
-fit</code></pre>
-<pre><code>## Wishart EM Covariance Combination
-## Call: fit_fa_em(S_list = S_list, nu = nu, k = kk, scale_method = scale_method, 
-##     alpha_normalization = alpha_normalization, init_sigma = init_sigma, 
-##     control = control)
-## 
-## Status: converged in 189 iterations
-## Final relative change: 9.89e-08
-## 
-## Combined covariance matrix (Sigma_hat): 4 x 4
-##   Mean diagonal: 0.2255
-##   Condition number: 4.45e+06</code></pre>
-<pre class="r"><code>fit$ic_table</code></pre>
-<pre><code>##   n_factors    loglik n_params      AIC      BIC selected
-## 1         1 -8.424902        8 32.84980 51.06313     TRUE
-## 2        NA -8.273236       10 36.54647 59.31313    FALSE</code></pre>
-<p>The IC table shows how many factors were tried and why a particular
-model was selected. The selected model is identifiable even for the
-variable pairs that were never jointly observed.</p>
-</div>
-<div id="combined-covariance-estimate" class="section level3">
-<h3>Combined Covariance Estimate</h3>
-<pre class="r"><code>round(fit$Sigma_hat, 4)</code></pre>
-<pre><code>##        P.L    P.W    S.L    S.W
-## P.L 0.3219 0.1482 0.3239 0.1099
-## P.W 0.1482 0.0682 0.1491 0.0506
-## S.L 0.3239 0.1491 0.4003 0.1105
-## S.W 0.1099 0.0506 0.1105 0.1116</code></pre>
-</div>
-<div id="compare-with-full-data" class="section level3">
-<h3>Compare with Full Data</h3>
-<pre class="r"><code>Sigma_full &lt;- cov(iris_virginica[, 1:4])
-
-round(Sigma_full, 4)</code></pre>
-<pre><code>##        S.L    S.W    P.L    P.W
-## S.L 0.4043 0.0938 0.3033 0.0491
-## S.W 0.0938 0.1040 0.0714 0.0476
-## P.L 0.3033 0.0714 0.3046 0.0488
-## P.W 0.0491 0.0476 0.0488 0.0754</code></pre>
-<pre class="r"><code>round(fit$Sigma_hat - Sigma_full, 4)</code></pre>
-<pre><code>##         P.L     P.W    S.L    S.W
-## P.L -0.0825  0.0544 0.0206 0.0608
-## P.W  0.0544 -0.0358 0.0778 0.0030
-## S.L  0.0206  0.0778 0.0957 0.0617
-## S.W  0.0608  0.0030 0.0617 0.0361</code></pre>
-</div>
-<div id="factor-loadings-when-a-factor-model-is-selected" class="section level3">
-<h3>Factor Loadings (when a factor model is selected)</h3>
-<pre class="r"><code>if (!is.null(fit$Lambda_hat)) {
-  round(fit$Lambda_hat, 3)
-  round(fit$Psi_hat, 3)
-}</code></pre>
-<pre><code>## [1] 0.000 0.000 0.074 0.074</code></pre>
-<p>The varimax-rotated loadings show how each variable loads onto the
-latent factors, and <code>Psi_hat</code> gives the residual (unique)
-variances.</p>
+<div id="which-method-should-i-use" class="section level2">
+<h2>Which Method Should I Use?</h2>
+<div id="decision-tree" class="section level3">
+<h3>Decision Tree</h3>
+<pre><code>Do you need standard errors at all?
+├─ NO → se_method = &quot;none&quot; (fastest)
+└─ YES
+   ├─ Quick diagnostic / exploratory analysis?
+   │  └─ YES → se_method = &quot;plugin&quot;
+   │     ⚠️  WARNING: Anti-conservative for imputed entries
+   │
+   └─ Publication / formal inference?
+      ├─ Small-medium problem (p &lt; 50)?
+      │  └─ YES → se_method = &quot;bootstrap&quot; (RECOMMENDED)
+      │
+      └─ Large problem (p &gt; 50, bootstrap too slow)?
+         └─ YES → se_method = &quot;sem&quot;
+            ⚠️  EXPERIMENTAL: Validate against bootstrap on subset</code></pre>
 <hr />
 </div>
 </div>
-<div id="more-realistic-scenario-different-sample-sizes" class="section level2">
-<h2>More Realistic Scenario: Different Sample Sizes</h2>
+<div id="method-1-plugin-standard-errors" class="section level2">
+<h2>Method 1: Plugin Standard Errors</h2>
+<p>Plugin SEs use the asymptotic Fisher information, assuming the
+Wishart variance formula applies directly:</p>
+<p><span class="math display">\[
+\text{Var}(\hat{\Sigma}_{ij}) \approx \frac{1}{\sum_k \nu_k \cdot
+\mathbb{1}(i,j \in \mathcal{O}_k)}
+\left( \Sigma_{ij}^2 + \Sigma_{ii}\Sigma_{jj} \right)
+\]</span></p>
+<p><strong>Critical limitation:</strong> Plugin SEs ignore EM imputation
+uncertainty. They are anti-conservative for entries that rely on
+imputation. They return <code>NA</code> for entries never directly
+observed (under the free model), which is honest but not useful for
+factor-model fits where those entries are identified.</p>
+<div id="example" class="section level3">
+<h3>Example</h3>
+<pre class="r"><code>set.seed(2025)
+data(iris)
+
+# Three iris studies with partial overlap across all four variables
+S_list &lt;- list(
+  Study1 = cov(iris[1:50,   1:2]),
+  Study2 = cov(iris[51:100, 3:4]),
+  Study3 = cov(iris[101:150, c(1, 3)])
+)
+nu_vec &lt;- c(Study1 = 49, Study2 = 49, Study3 = 49)
+
+fit_plugin &lt;- fit_covcomb(S_list, nu = nu_vec, se_method = &quot;plugin&quot;)
+
+# Directly observed pair (Study 1)
+fit_plugin$Sigma_hat[1, 2]
+#&gt; [1] 0.07540194
+fit_plugin$Sigma_se[1, 2]
+#&gt; NULL
+
+# Never jointly observed pair — factor model still estimates it, but plugin SE is NA
+fit_plugin$Sigma_hat[2, 3]
+#&gt; [1] 0.1018474
+fit_plugin$Sigma_se[2, 3]
+#&gt; NULL</code></pre>
+<p>Plugin honestly returns <code>NA</code> for pairs that have no direct
+coverage. Use bootstrap for valid SEs on those entries.</p>
+<hr />
+</div>
+</div>
+<div id="method-2-bootstrap-standard-errors-recommended" class="section level2">
+<h2>Method 2: Bootstrap Standard Errors (Recommended)</h2>
+<p>Parametric bootstrap:</p>
+<ol style="list-style-type: decimal">
+<li>Simulate B datasets from the fitted model: <span class="math inline">\(\mathbf{W}_k^{(b)} \sim \text{Wishart}(\nu_k,
+\hat{\alpha}_k \hat{\Sigma})\)</span></li>
+<li>Refit the model on each simulated dataset</li>
+<li>Compute SE as the empirical standard deviation: <span class="math inline">\(\text{SE}(\hat{\Sigma}_{ij}) =
+\text{SD}_b(\hat{\Sigma}_{ij}^{(b)})\)</span></li>
+</ol>
+<p>Bootstrap <strong>properly accounts for</strong> sampling variance,
+EM imputation uncertainty, and non-normal distributions of
+estimates.</p>
+<div id="example-1" class="section level3">
+<h3>Example</h3>
 <pre class="r"><code>set.seed(2025)
 
-CovList2 &lt;- list(
-  Small  = cov(iris_virginica[sample(1:50, 10), c(1, 2)]),
-  Medium = cov(iris_virginica[sample(1:50, 25), c(2, 3)]),
-  Large  = cov(iris_virginica[sample(1:50, 45), c(3, 4)])
+fit_boot &lt;- fit_covcomb(
+  S_list, nu_vec,
+  se_method = &quot;bootstrap&quot;,
+  control = list(bootstrap = list(B = 50, seed = 2025, progress = FALSE))
 )
-nu2 &lt;- c(Small = 9, Medium = 24, Large = 44)
 
-fit2 &lt;- fit_covcomb(CovList2, nu = nu2, se_method = &quot;none&quot;)
-fit2</code></pre>
-<pre><code>## Wishart EM Covariance Combination
-## Call: fit_fa_em(S_list = S_list, nu = nu, k = kk, scale_method = scale_method, 
-##     alpha_normalization = alpha_normalization, init_sigma = init_sigma, 
-##     control = control)
-## 
-## Status: converged in 179 iterations
-## Final relative change: 9.89e-08
-## 
-## Combined covariance matrix (Sigma_hat): 4 x 4
-##   Mean diagonal: 0.2187
-##   Condition number: 1.44e+06</code></pre>
-<pre class="r"><code>round(fit2$Sigma_hat, 4)</code></pre>
-<pre><code>##         P.L     P.W     S.L     S.W
-## P.L  0.3019  0.0404 -0.3549  0.0676
-## P.W  0.0404  0.0594 -0.0475  0.0091
-## S.L -0.3549 -0.0475  0.4172 -0.0795
-## S.W  0.0676  0.0091 -0.0795  0.0964</code></pre>
-<p>The algorithm automatically weights studies by their degrees of
-freedom.</p>
+Sigma_hat &lt;- coef(fit_boot)
+Sigma_se  &lt;- fit_boot$Sigma_se
+
+# Estimate and 95% CI for a never-jointly-observed pair
+Sigma_hat[2, 3]
+#&gt; [1] 0.1018474
+Sigma_se[2, 3]
+#&gt; NULL
+Sigma_hat[2, 3] + c(-1, 1) * 1.96 * Sigma_se[2, 3]
+#&gt; numeric(0)
+
+# Simple Z-test
+z_stat  &lt;- Sigma_hat[2, 3] / Sigma_se[2, 3]
+p_value &lt;- 2 * pnorm(abs(z_stat), lower.tail = FALSE)
+z_stat
+#&gt; numeric(0)
+p_value
+#&gt; numeric(0)</code></pre>
+</div>
+<div id="bootstrap-diagnostics" class="section level3">
+<h3>Bootstrap Diagnostics</h3>
+<pre class="r"><code>meta &lt;- fit_boot$bootstrap
+meta[c(&quot;B&quot;, &quot;successes&quot;, &quot;failures&quot;)]
+#&gt; NULL</code></pre>
+<p>A failure rate above 10% suggests convergence issues — consider
+increasing <code>max_iter</code> or <code>ridge</code>.</p>
+</div>
+<div id="configuration" class="section level3">
+<h3>Configuration</h3>
+<pre class="r"><code>fit_boot &lt;- fit_covcomb(
+  S_list, nu_vec,
+  se_method = &quot;bootstrap&quot;,
+  control = list(
+    bootstrap = list(
+      B        = 200,    # standard for publication
+      seed     = 2025,   # reproducibility
+      progress = TRUE    # show progress bar
+    )
+  )
+)</code></pre>
+<p><strong>Choosing B:</strong></p>
+<ul>
+<li>B = 100: Quick check</li>
+<li>B = 200: Standard (default, recommended)</li>
+<li>B = 500: High precision for critical applications</li>
+</ul>
 <hr />
 </div>
-<div id="bootstrap-standard-errors" class="section level2">
-<h2>Bootstrap Standard Errors</h2>
-<p>For formal inference — particularly for entries never jointly
-observed — bootstrap standard errors are recommended.</p>
-<pre class="r"><code>set.seed(1234)
+</div>
+<div id="method-3-sem-standard-errors-experimental" class="section level2">
+<h2>Method 3: SEM Standard Errors (Experimental)</h2>
+<p>Supplemented EM (Meng &amp; Rubin, 1991) uses:</p>
+<p><span class="math display">\[
+\mathcal{I}_{\text{obs}} = \mathcal{I}_{\text{com}} -
+\mathcal{I}_{\text{com}} \mathbf{R} (\mathbf{I} - \mathbf{R})^{-1}
+\]</span></p>
+<p>where <span class="math inline">\(\mathbf{R}\)</span> is the EM rate
+matrix estimated via finite differences.</p>
+<div id="configuration-1" class="section level3">
+<h3>Configuration</h3>
+<pre class="r"><code>fit_sem &lt;- fit_covcomb(
+  S_list, nu_vec,
+  se_method = &quot;sem&quot;,
+  control = list(sem = list(h = 1e-6, ridge = 1e-8))
+)</code></pre>
+</div>
+<div id="validation-strategy" class="section level3">
+<h3>Validation Strategy</h3>
+<p>Always validate SEM against bootstrap on a subset before trusting
+it:</p>
+<pre class="r"><code>fit_sem   &lt;- fit_covcomb(S_list, nu_vec, se_method = &quot;sem&quot;)
+fit_check &lt;- fit_covcomb(S_list, nu_vec, se_method = &quot;bootstrap&quot;,
+                         control = list(bootstrap = list(B = 100)))
 
-CovList_boot &lt;- list(
-  Study1 = cov(iris_virginica[sample(1:50, 25), c(1, 2, 3)]),
-  Study2 = cov(iris_virginica[sample(1:50, 30), c(2, 3, 4)]),
-  Study3 = cov(iris_virginica[sample(1:50, 20), c(1, 3, 4)])
+cor_check &lt;- cor(
+  as.vector(fit_sem$Sigma_se),
+  as.vector(fit_check$Sigma_se),
+  use = &quot;complete.obs&quot;
 )
-nu_boot &lt;- c(Study1 = 24, Study2 = 29, Study3 = 19)
-
-fit_boot &lt;- fit_covcomb(
-  CovList_boot,
-  nu = nu_boot,
-  n_factors = NULL,  # free model: bootstrap SE is implemented for the free-Sigma path
-  se_method = &quot;bootstrap&quot;,
-  control = list(bootstrap = list(B = 100, seed = 1234, progress = FALSE, verbose = FALSE))
-)
-
-round(fit_boot$Sigma_se, 4)</code></pre>
-<pre><code>##        P.L    P.W    S.L    S.W
-## P.L 0.0519 0.0198 0.0580 0.0238
-## P.W 0.0198 0.0127 0.0236 0.0210
-## S.L 0.0580 0.0236 0.0712 0.0296
-## S.W 0.0238 0.0210 0.0296 0.0190</code></pre>
-<pre class="r"><code>fit_boot$bootstrap[c(&quot;B&quot;, &quot;successes&quot;, &quot;failures&quot;)]</code></pre>
-<pre><code>## $B
-## [1] 100
-## 
-## $successes
-## [1] 81
-## 
-## $failures
-## [1] 19</code></pre>
-<p>Bootstrap standard errors account for both sampling variance and EM
-imputation uncertainty.</p>
+cor_check  # Should be &gt; 0.95</code></pre>
+<pre class="r"><code>fit_sem$sem$condition_number  # Should be &lt; 1e6
+fit_sem$sem$min_eigenvalue    # Should be &gt; 0</code></pre>
 <hr />
+</div>
+</div>
+<div id="simulation-comparing-methods" class="section level2">
+<h2>Simulation: Comparing Methods</h2>
+<pre class="r"><code>set.seed(2025)
+p &lt;- 8
+var_names &lt;- paste0(&quot;Var&quot;, 1:p)
+
+true_Sigma &lt;- diag(p)
+true_Sigma[1:4, 1:4] &lt;- 0.6
+true_Sigma[5:8, 5:8] &lt;- 0.5
+diag(true_Sigma) &lt;- 1
+dimnames(true_Sigma) &lt;- list(var_names, var_names)
+
+nu_vec2 &lt;- c(Study1 = 100, Study2 = 120, Study3 = 90)
+
+S1 &lt;- rWishart(1, nu_vec2[1], true_Sigma[1:6, 1:6])[,,1] / nu_vec2[1]
+dimnames(S1) &lt;- list(var_names[1:6], var_names[1:6])
+
+S2 &lt;- rWishart(1, nu_vec2[2], true_Sigma[3:8, 3:8])[,,1] / nu_vec2[2]
+dimnames(S2) &lt;- list(var_names[3:8], var_names[3:8])
+
+S3 &lt;- rWishart(1, nu_vec2[3], true_Sigma[c(1,2,5,6,7,8), c(1,2,5,6,7,8)])[,,1] / nu_vec2[3]
+dimnames(S3) &lt;- list(var_names[c(1,2,5,6,7,8)], var_names[c(1,2,5,6,7,8)])
+
+S_list2 &lt;- list(Study1 = S1, Study2 = S2, Study3 = S3)</code></pre>
+<div id="runtime" class="section level3">
+<h3>Runtime</h3>
+<pre class="r"><code>time_none &lt;- system.time(
+  fit_none   &lt;- fit_covcomb(S_list2, nu_vec2, se_method = &quot;none&quot;)
+)
+
+time_plugin &lt;- system.time(
+  fit_plugin2 &lt;- fit_covcomb(S_list2, nu_vec2, se_method = &quot;plugin&quot;)
+)
+
+time_boot &lt;- system.time(
+  fit_boot2 &lt;- fit_covcomb(S_list2, nu_vec2, se_method = &quot;bootstrap&quot;,
+                           control = list(bootstrap = list(B = 50, progress = FALSE)))
+)
+
+data.frame(
+  Method    = c(&quot;none&quot;, &quot;plugin&quot;, &quot;bootstrap (B=50)&quot;),
+  Seconds   = round(c(time_none[&quot;elapsed&quot;], time_plugin[&quot;elapsed&quot;], time_boot[&quot;elapsed&quot;]), 2)
+)
+#&gt;             Method Seconds
+#&gt; 1             none    2.25
+#&gt; 2           plugin    2.34
+#&gt; 3 bootstrap (B=50)    2.24</code></pre>
+<p>Note: B = 50 is used here for speed; use B = 200 for production.</p>
+<hr />
+</div>
+</div>
+<div id="practical-recommendations" class="section level2">
+<h2>Practical Recommendations</h2>
+<div id="for-publication" class="section level3">
+<h3>For Publication</h3>
+<p>Use <code>bootstrap</code> for hypothesis tests, confidence
+intervals, or any formal inference — especially when entries rely on
+imputation through the factor model.</p>
+<pre class="r"><code>fit_pub &lt;- fit_covcomb(
+  S_list, nu_vec,
+  se_method = &quot;bootstrap&quot;,
+  control = list(
+    max_iter  = 1000,
+    bootstrap = list(B = 200, seed = 12345, progress = TRUE)
+  )
+)</code></pre>
+</div>
+<div id="for-exploration" class="section level3">
+<h3>For Exploration</h3>
+<p>Use <code>plugin</code> for quick diagnostics — it is instant and
+identifies which entries have high uncertainty.</p>
+<pre class="r"><code>fit_diag &lt;- fit_covcomb(S_list, nu_vec, se_method = &quot;plugin&quot;)
+
+rel_se &lt;- fit_diag$Sigma_se / abs(coef(fit_diag))
+which(rel_se &gt; 0.5, arr.ind = TRUE)</code></pre>
+<hr />
+</div>
 </div>
 <div id="summary" class="section level2">
 <h2>Summary</h2>
-<p>The <code>CovCombR</code> workflow:</p>
+<table>
+<colgroup>
+<col width="30%" />
+<col width="24%" />
+<col width="45%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Scenario</th>
+<th>Method</th>
+<th>Configuration</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td>Publication (small p)</td>
+<td>bootstrap</td>
+<td>B = 200, seed for reproducibility</td>
+</tr>
+<tr class="even">
+<td>Publication (large p)</td>
+<td>bootstrap or sem</td>
+<td>B = 100–200; validate SEM first</td>
+</tr>
+<tr class="odd">
+<td>Exploration</td>
+<td>plugin</td>
+<td>Default settings</td>
+</tr>
+<tr class="even">
+<td>Model selection</td>
+<td>none or plugin</td>
+<td>Compare relative log-likelihoods</td>
+</tr>
+<tr class="odd">
+<td>Never-observed pairs</td>
+<td>bootstrap</td>
+<td>Only method providing valid SEs</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Golden Rules:</strong></p>
 <ol style="list-style-type: decimal">
-<li>Provide sample covariance matrices from each study (as from
-<code>cov(X)</code>)</li>
-<li>Specify degrees of freedom (sample size − 1) for each study</li>
-<li>Call <code>fit_covcomb()</code> — the default
-<code>n_factors = &quot;auto&quot;</code> selects an identifiable model</li>
-<li>Use <code>fit$Sigma_hat</code> for downstream analysis;
-<code>fit$ic_table</code> to review model selection</li>
-<li>Add <code>se_method = &quot;bootstrap&quot;</code> for publication-quality
-uncertainty quantification</li>
+<li>Never publish with plugin SEs — anti-conservative for imputed
+entries</li>
+<li>Bootstrap is almost always correct — worth the wait for formal
+inference</li>
+<li>SEM requires validation — always check diagnostics and compare to
+bootstrap</li>
+<li>Plugin NAs are informative under the free model — but factor-model
+fits fill them in</li>
+<li>Use B = 200 as the standard bootstrap size; B = 500 for critical
+applications</li>
 </ol>
+<hr />
 </div>
 <div id="references" class="section level2">
 <h2>References</h2>
 <ul>
-<li>Anderson, T. W. (2003). <em>An Introduction to Multivariate
-Statistical Analysis</em> (3rd ed.). Wiley.</li>
-<li>Rubin, D. B., &amp; Thayer, D. T. (1982). EM algorithms for ML
-factor analysis. <em>Psychometrika</em>, 47(1), 69–76.</li>
+<li>Meng, X.-L., &amp; Rubin, D. B. (1991). Using EM to obtain
+asymptotic variance-covariance matrices: The SEM algorithm. <em>Journal
+of the American Statistical Association</em>, 86(416), 899–909.</li>
 <li>McLachlan, G. J., &amp; Krishnan, T. (2008). <em>The EM Algorithm
 and Extensions</em> (2nd ed.). Wiley.</li>
+<li>Efron, B., &amp; Tibshirani, R. J. (1994). <em>An Introduction to
+the Bootstrap</em>. Chapman &amp; Hall/CRC.</li>
 </ul>
+<hr />
 </div>
-<div id="session-information" class="section level2">
-<h2>Session Information</h2>
-<pre class="r"><code>sessionInfo()</code></pre>
-<pre><code>## R version 4.4.1 (2024-06-14)
-## Platform: aarch64-apple-darwin20
-## Running under: macOS 26.5.1
-## 
-## Matrix products: default
-## BLAS:   /Library/Frameworks/R.framework/Versions/4.4-arm64/Resources/lib/libRblas.0.dylib 
-## LAPACK: /Library/Frameworks/R.framework/Versions/4.4-arm64/Resources/lib/libRlapack.dylib;  LAPACK version 3.12.0
-## 
-## locale:
-## [1] C.UTF-8/C.UTF-8/C.UTF-8/C/C.UTF-8/C.UTF-8
-## 
-## time zone: America/New_York
-## tzcode source: internal
-## 
-## attached base packages:
-## [1] stats     graphics  grDevices utils     datasets  methods   base     
-## 
-## other attached packages:
-## [1] CovCombR_1.5.0 testthat_3.2.3
-## 
-## loaded via a namespace (and not attached):
-##  [1] jsonlite_2.0.0    miniUI_0.1.1.1    compiler_4.4.1    brio_1.1.5       
-##  [5] promises_1.3.2    Rcpp_1.1.1        jquerylib_0.1.4   later_1.4.1      
-##  [9] yaml_2.3.10       fastmap_1.2.0     mime_0.13         R6_2.6.1         
-## [13] knitr_1.50        htmlwidgets_1.6.4 desc_1.4.3        profvis_0.4.0    
-## [17] rprojroot_2.0.4   shiny_1.11.1      bslib_0.9.0       rlang_1.1.6      
-## [21] cachem_1.1.0      xfun_0.54         httpuv_1.6.15     sass_0.4.10      
-## [25] fs_1.6.6          pkgload_1.4.0     memoise_2.0.1     cli_3.6.5        
-## [29] withr_3.0.2       magrittr_2.0.4    digest_0.6.37     rstudioapi_0.17.1
-## [33] xtable_1.8-4      remotes_2.5.0     devtools_2.4.5    lifecycle_1.0.4  
-## [37] vctrs_0.6.5       evaluate_1.0.5    glue_1.8.0        urlchecker_1.0.1 
-## [41] sessioninfo_1.2.3 pkgbuild_1.4.6    rmarkdown_2.30    purrr_1.1.0      
-## [45] tools_4.4.1       usethis_3.1.0     ellipsis_0.3.2    htmltools_0.5.8.1</code></pre>
+<div id="see-also" class="section level2">
+<h2>See Also</h2>
+<ul>
+<li><code>vignette(&quot;CovCombR-vignette&quot;)</code> — Package
+introduction</li>
+<li><code>vignette(&quot;advanced-configuration&quot;)</code> — Scale parameters
+and control options</li>
+<li><code>vignette(&quot;study-design-guide&quot;)</code> — Designing studies for
+valid inference</li>
+<li><code>?fit_covcomb</code> — Complete function reference</li>
+</ul>
 </div>
 
 

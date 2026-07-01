@@ -11,9 +11,9 @@
 
 <meta name="author" content="CovCombR Package" />
 
-<meta name="date" content="2026-06-30" />
+<meta name="date" content="2026-07-01" />
 
-<title>Combining Incomplete Covariance Matrices: Iris Example</title>
+<title>Identifiability, Error Analysis, and Power Analysis for Covariance Matrix Estimation from Partial Observations</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -350,294 +350,753 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Combining Incomplete Covariance Matrices:
-Iris Example</h1>
+<h1 class="title toc-ignore">Identifiability, Error Analysis, and Power
+Analysis for Covariance Matrix Estimation from Partial Observations</h1>
 <h4 class="author">CovCombR Package</h4>
-<h4 class="date">2026-06-30</h4>
+<h4 class="date">2026-07-01</h4>
 
 </div>
 
-<div id="TOC">
+
+<div id="introduction" class="section level1">
+<h1>Introduction</h1>
+<p>This document provides a formal proof of identifiability for a
+covariance matrix <span class="math inline">\(\Sigma\)</span> based on
+observations of its principal submatrices. It establishes that
+identifiability hinges on the chordality of the observation graph, not
+just its connectivity. It then analyzes the error, convergence, and bias
+of the maximum likelihood estimator (MLE), demonstrating that estimation
+error for unobserved entries scales with the square of the shortest path
+distance (<span class="math inline">\(d_{ij}^2\)</span>) in the
+graph.</p>
+<p><strong>Scope note</strong>: Every result below — chordality,
+path-distance error scaling, the SE-inflation theorems — applies to the
+<strong>unconstrained free-<span class="math inline">\(\Sigma\)</span>
+model</strong> (<code>n_factors = NULL</code>). Since CovCombR 1.6,
+<code>fit_covcomb()</code> defaults to <code>n_factors = &quot;auto&quot;</code>,
+which can select a <strong>factor model</strong> (<span class="math inline">\(\Sigma = \Lambda\Lambda^\top + \Psi\)</span>)
+instead. The factor model extends identifiability beyond chordal
+coverage: an entry <span class="math inline">\(\Sigma_{ij}\)</span> can
+be identified through shared factor loadings even when the observation
+graph is non-chordal, or when <span class="math inline">\((i,j)\)</span>
+lies outside any chordal completion. The code examples in this document
+explicitly pass <code>n_factors = NULL</code> so that the numerical
+results match the free-<span class="math inline">\(\Sigma\)</span>
+theory developed here; see <code>vignette(&quot;statistical-methods&quot;)</code>
+for the factor-model identifiability conditions.</p>
+</div>
+<div id="setup-and-notation" class="section level1">
+<h1>Setup and Notation</h1>
+<div id="formal-problem-statement" class="section level2">
+<h2>Formal Problem Statement</h2>
+<p>Let <span class="math inline">\(\Sigma \in S^p_+\)</span> (the cone
+of <span class="math inline">\(p \times p\)</span> positive definite
+matrices) be the true covariance matrix.</p>
+<p><strong>Observation Pattern</strong>: For each study <span class="math inline">\(k = 1, \ldots, K\)</span>, we observe a sample
+covariance matrix <span class="math inline">\(S_k\)</span> based on
+<span class="math inline">\(\nu_k\)</span> degrees of freedom,
+corresponding to a principal submatrix of <span class="math inline">\(\Sigma\)</span>.</p>
+<p><span class="math display">\[S_k \sim \text{Wishart}(\nu_k,
+\Sigma_k)\]</span></p>
+<p>where <span class="math inline">\(\Sigma_k = \Sigma[O_k,
+O_k]\)</span> is the true covariance submatrix for the observed set
+<span class="math inline">\(O_k \subseteq \{1, \ldots, p\}\)</span> with
+<span class="math inline">\(|O_k| = p_k \geq 2\)</span>.</p>
+<p><strong>Note</strong>: We use the “sum-of-squares” Wishart
+parametrization where <span class="math inline">\(\mathbb{E}[S_k] =
+\nu_k \Sigma_k\)</span>.</p>
+<p><strong>Observation Graph</strong>: We define an undirected graph
+<span class="math inline">\(G = (V, E)\)</span> where:</p>
 <ul>
-<li><a href="#introduction" id="toc-introduction">Introduction</a></li>
-<li><a href="#example-with-iris-data" id="toc-example-with-iris-data">Example with Iris Data</a></li>
-<li><a href="#more-realistic-scenario-different-sample-sizes" id="toc-more-realistic-scenario-different-sample-sizes">More Realistic
-Scenario: Different Sample Sizes</a></li>
-<li><a href="#bootstrap-standard-errors" id="toc-bootstrap-standard-errors">Bootstrap Standard Errors</a></li>
-<li><a href="#summary" id="toc-summary">Summary</a></li>
-<li><a href="#references" id="toc-references">References</a></li>
-<li><a href="#session-information" id="toc-session-information">Session
-Information</a></li>
+<li><span class="math inline">\(V = \{1, \ldots, p\}\)</span></li>
+<li><span class="math inline">\(E = \{(i,j) : i \neq j,\, \exists k
+\text{ such that } \{i,j\} \subseteq O_k\}\)</span></li>
+</ul>
+<p><strong>Parameter Space Partition</strong>: The <span class="math inline">\(d_{\text{total}} = p(p+1)/2\)</span> unique
+entries of <span class="math inline">\(\Sigma\)</span> are partitioned
+into:</p>
+<ul>
+<li><strong>Observed entries</strong>: <span class="math inline">\(\Sigma^{\text{obs}} = \{\Sigma_{ij} : (i,j) \in E
+\text{ or } i=j\}\)</span>. We assume all diagonal entries <span class="math inline">\(\Sigma_{ii}\)</span> are observed.</li>
+<li><strong>Unobserved entries</strong>: <span class="math inline">\(\Sigma^{\text{unobs}} = \{\Sigma_{ij} : (i,j)
+\notin E \text{ and } i \neq j\}\)</span>.</li>
 </ul>
 </div>
-
-<div id="introduction" class="section level2">
-<h2>Introduction</h2>
-<p>This vignette demonstrates how to use the <code>CovCombR</code>
-package to combine incomplete covariance matrices using the classic iris
-dataset. Different studies measure different subsets of variables;
-CovCombR recovers the full covariance structure from these partial
-observations.</p>
-<div id="the-problem" class="section level3">
-<h3>The Problem</h3>
-<p>Suppose three studies each measure a different pair of iris
-variables:</p>
+<div id="likelihood-function" class="section level2">
+<h2>Likelihood Function</h2>
+<p>The observed-data log-likelihood is the sum of the log-likelihoods
+for each independent study:</p>
+<p><span class="math display">\[\ell(\Sigma) = \sum_{k=1}^K
+\ell_k(\Sigma[O_k, O_k]) + C\]</span></p>
+<p><span class="math display">\[\ell(\Sigma) = \sum_{k=1}^K
+\left[-\frac{\nu_k}{2}\log|\Sigma[O_k,O_k]| -
+\frac{1}{2}\text{tr}\left((\Sigma[O_k,O_k])^{-1}S_k\right)\right] +
+C\]</span></p>
+<p>where <span class="math inline">\(C\)</span> is a constant
+independent of <span class="math inline">\(\Sigma\)</span>.</p>
+<p><strong>Lemma 1.1</strong> (Likelihood Insensitivity to <span class="math inline">\(\Sigma^{\text{unobs}}\)</span>): For any
+unobserved entry <span class="math inline">\(\Sigma_{ij}\)</span> where
+<span class="math inline">\((i,j) \notin E\)</span>, the partial
+derivative of the log-likelihood is zero, if the positive definite
+constraint is ignored.</p>
+<p><span class="math display">\[\frac{\partial \ell(\Sigma)}{\partial
+\Sigma_{ij}} \bigg|_{\text{unconstrained}} = 0\]</span></p>
+<p><em>Proof</em>: By definition of the graph <span class="math inline">\(G\)</span>, if <span class="math inline">\((i,j)
+\notin E\)</span>, the pair <span class="math inline">\((i,j)\)</span>
+never appears simultaneously in any observed set <span class="math inline">\(O_k\)</span>. Therefore, the entry <span class="math inline">\(\Sigma_{ij}\)</span> does not appear in any term
+<span class="math inline">\(\Sigma[O_k, O_k]\)</span> in the likelihood
+function. <span class="math inline">\(\square\)</span></p>
+<p><strong>Implication</strong>: The likelihood function <span class="math inline">\(\ell(\Sigma)\)</span> depends only on <span class="math inline">\(\Sigma^{\text{obs}}\)</span>. Identifiability of
+<span class="math inline">\(\Sigma^{\text{unobs}}\)</span> cannot come
+from maximizing <span class="math inline">\(\ell(\Sigma)\)</span>
+directly; it must arise from the positive definite (PD) constraint <span class="math inline">\(\Sigma \in S^p_+\)</span>, which couples the
+observed and unobserved entries.</p>
+</div>
+</div>
+<div id="graph-structure-and-information-flow" class="section level1">
+<h1>Graph Structure and Information Flow</h1>
+<div id="definition-path-connectivity" class="section level2">
+<h2>Definition: Path Connectivity</h2>
+<p><strong>Definition 2.1</strong> (Path): A path of length <span class="math inline">\(\ell\)</span> from <span class="math inline">\(i\)</span> to <span class="math inline">\(j\)</span> in <span class="math inline">\(G\)</span> is a sequence <span class="math inline">\(i = v_0, v_1, \ldots, v_\ell = j\)</span> such
+that <span class="math inline">\((v_r, v_{r+1}) \in E\)</span> for all
+<span class="math inline">\(r = 0, \ldots, \ell - 1\)</span>.</p>
+<p><strong>Definition 2.2</strong> (Graph Connected): Graph <span class="math inline">\(G\)</span> is connected if for every pair <span class="math inline">\((i,j)\)</span>, there exists a path from <span class="math inline">\(i\)</span> to <span class="math inline">\(j\)</span>.</p>
+<p><strong>Definition 2.3</strong> (Path Length Matrix): Let <span class="math inline">\(d_{ij}\)</span> denote the shortest path distance
+between <span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span> in <span class="math inline">\(G\)</span>. We define the maximum shortest path
+for unobserved entries:</p>
+<p><span class="math display">\[\ell_{\max} = \max_{(i,j) \notin E}
+d_{ij}\]</span></p>
+<p><strong>Definition 2.4</strong> (Chordal Graph): A graph <span class="math inline">\(G\)</span> is chordal (or triangulated) if every
+cycle of length 4 or more has a “chord” (an edge between two
+non-adjacent vertices in the cycle).</p>
+</div>
+<div id="imputation-structure-em-algorithm" class="section level2">
+<h2>Imputation Structure (EM Algorithm)</h2>
+<p>While not required for the proof of identifiability, the structure of
+the EM algorithm is crucial for the error analysis. The EM algorithm
+finds the MLE <span class="math inline">\(\hat{\Sigma}\)</span> by
+iterating two steps:</p>
 <ul>
-<li>Study 1: Sepal.Length and Sepal.Width</li>
-<li>Study 2: Sepal.Length and Petal.Length</li>
-<li>Study 3: Sepal.Width and Petal.Width</li>
+<li><strong>E-step</strong>: Impute the complete-data sufficient
+statistics. This requires calculating the conditional expectation of the
+(hypothetical) complete <span class="math inline">\(p \times p\)</span>
+matrices <span class="math inline">\(W_k\)</span> given the observed
+data <span class="math inline">\(S_k\)</span> and the current estimate
+<span class="math inline">\(\Sigma^{(t)}\)</span>.</li>
+<li><strong>M-step</strong>: Update the estimate: <span class="math inline">\(\Sigma^{(t+1)} = \frac{1}{\nu} \sum_{k=1}^K
+\mathbb{E}[W_k \mid S_k, \Sigma^{(t)}]\)</span>, where <span class="math inline">\(\nu = \sum_k \nu_k\)</span>.</li>
 </ul>
-<p>The pairs (Sepal.Width, Petal.Length), (Petal.Length, Petal.Width),
-and (Sepal.Length, Petal.Width) are never jointly observed. With the
-<strong>free-Σ model</strong> those covariances would be unidentified.
-With the <strong>factor model</strong> they can be recovered through
-shared relationships across the overlapping variables — which is why
-CovCombR defaults to automatic factor-model selection.</p>
+<p>The key quantities are the conditional expectations of the missing
+blocks (see Lemma A.2). For example, the imputed cross-covariance
+between an observed block <span class="math inline">\(O_k\)</span> and a
+missing block <span class="math inline">\(M_k\)</span> is:</p>
+<p><span class="math display">\[\mathbb{E}[W_k[O_k, M_k] \mid S_k,
+\Sigma^{(t)}] = S_k \left(\Sigma^{(t)}[O_k, O_k]\right)^{-1}
+\Sigma^{(t)}[O_k, M_k]\]</span></p>
+<p>This imputation relies on regression-like formulas. For an unobserved
+pair <span class="math inline">\((i,j)\)</span>, information propagates
+along paths in <span class="math inline">\(G\)</span>. For instance, in
+a path <span class="math inline">\(i-v-j\)</span>, the imputation of
+<span class="math inline">\(\Sigma_{ij}\)</span> relies on the observed
+<span class="math inline">\(\Sigma_{iv}\)</span> and <span class="math inline">\(\Sigma_{vj}\)</span>, which are “bridged” by the
+intermediate node <span class="math inline">\(v\)</span>. Graph
+connectivity (A1) ensures that such a path always exists, allowing the
+EM algorithm to propagate information to all entries.</p>
 </div>
 </div>
-<div id="example-with-iris-data" class="section level2">
-<h2>Example with Iris Data</h2>
-<div id="load-and-prepare" class="section level3">
-<h3>Load and Prepare</h3>
-<pre class="r"><code>library(CovCombR)
-data(iris)
-colnames(iris) &lt;- c(&quot;S.L&quot;, &quot;S.W&quot;, &quot;P.L&quot;, &quot;P.W&quot;, &quot;Species&quot;)
-iris_virginica &lt;- iris[iris$Species == &quot;virginica&quot;, ]
-nrow(iris_virginica)</code></pre>
-<pre><code>## [1] 50</code></pre>
+<div id="main-identifiability-theorem" class="section level1">
+<h1>Main Identifiability Theorem</h1>
+<div id="observation-hypergraph-and-clique-coverage" class="section level2">
+<h2>Observation Hypergraph and Clique Coverage</h2>
+<p>Let <span class="math inline">\(H = \{O_k\}_{k=1}^K\)</span> be the
+observation hypergraph and <span class="math inline">\(G = (V,
+E)\)</span> the edge graph induced by <span class="math inline">\(H\)</span> as defined earlier. Let <span class="math inline">\(\mathbb{C}\)</span> denote the set of maximal
+cliques of <span class="math inline">\(G\)</span>.</p>
+<p>We say that <strong>clique coverage</strong> holds if for every
+maximal clique <span class="math inline">\(C \in \mathbb{C}\)</span>,
+there exists at least one study <span class="math inline">\(k\)</span>
+with <span class="math inline">\(C \subseteq O_k\)</span>; that is, the
+full principal submatrix <span class="math inline">\(\Sigma[C,
+C]\)</span> is observed in at least one study.</p>
 </div>
-<div id="create-incomplete-covariance-matrices" class="section level3">
-<h3>Create Incomplete Covariance Matrices</h3>
-<pre class="r"><code>set.seed(1234)
+<div id="theorem-local-identifiability-via-chordal-cliques" class="section level2">
+<h2>Theorem: Local Identifiability via Chordal Cliques</h2>
+<p>The original proof’s reliance on connectivity is insufficient.
+Connectivity ensures the EM algorithm can propagate information, but it
+does not guarantee a unique solution. A 4-cycle, for example, is
+connected but allows an interval of valid PD completions. Moreover,
+chordality alone (with only pairwise observations) is also insufficient.
+The correct condition requires that <strong>maximal cliques be fully
+observed</strong>.</p>
+<p><strong>Theorem 3.1</strong> (Identifiability Theorem): Suppose:</p>
+<ul>
+<li><strong>(A1)</strong> Graph connectivity: <span class="math inline">\(G\)</span> is connected.</li>
+<li><strong>(A1’)</strong> Graph chordality: <span class="math inline">\(G\)</span> is chordal (decomposable).</li>
+<li><strong>(A2)</strong> Clique coverage: For each maximal clique <span class="math inline">\(C \in \mathbb{C}\)</span> of <span class="math inline">\(G\)</span>, the full principal submatrix <span class="math inline">\(\Sigma[C, C]\)</span> is observed in at least one
+study <span class="math inline">\(S_k\)</span> (i.e., <span class="math inline">\(C \subseteq O_k\)</span>).</li>
+<li><strong>(A3)</strong> Non-degeneracy: The true <span class="math inline">\(\Sigma^*[O_k, O_k]\)</span> lies in the interior
+of <span class="math inline">\(S^{p_k}_+\)</span> for all <span class="math inline">\(k\)</span>.</li>
+<li><strong>(A4)</strong> Sufficient sample size: <span class="math inline">\(\nu_k \geq p_k\)</span> for all <span class="math inline">\(k\)</span> (ensures <span class="math inline">\(S_k\)</span> is non-degenerate w.p. 1).</li>
+</ul>
+<p>Then, the true parameter <span class="math inline">\(\Sigma^*\)</span> is locally identifiable. That
+is, there exists a neighborhood <span class="math inline">\(U\)</span>
+of <span class="math inline">\(\Sigma^*\)</span> such that for any other
+<span class="math inline">\(\Sigma&#39; \in U \cap S^p_+\)</span>, if
+<span class="math inline">\(\ell(\Sigma&#39;) = \ell(\Sigma^*)\)</span>,
+then <span class="math inline">\(\Sigma&#39; = \Sigma^*\)</span>.</p>
+<p><em>Equivalently</em>: For any two matrices <span class="math inline">\(\Sigma^{(1)}, \Sigma^{(2)} \in U \cap
+S^p_+\)</span>:</p>
+<p>If <span class="math inline">\(\Sigma^{(1),\text{obs}} =
+\Sigma^{(2),\text{obs}}\)</span>, then <span class="math inline">\(\Sigma^{(1)} = \Sigma^{(2)}\)</span>.</p>
+<p><strong>Remark</strong>: If only edges <span class="math inline">\((i,j) \in E\)</span> and diagonals are observed
+(without full clique submatrices), uniqueness generally fails even when
+<span class="math inline">\(G\)</span> is chordal. Additional
+information—fully observed clique submatrices or structural assumptions
+(e.g., sparsity in <span class="math inline">\(\Sigma^{-1}\)</span>,
+factor models)—is required for identifiability.</p>
+</div>
+<div id="proof-of-theorem-3.1" class="section level2">
+<h2>Proof of Theorem 3.1</h2>
+<p><strong>Step 1: Likelihood determines observed entries.</strong></p>
+<p>From Lemma 1.1, the observed-data log-likelihood <span class="math inline">\(\ell(\Sigma)\)</span> is a function only of <span class="math inline">\(\Sigma^{\text{obs}}\)</span>. Under assumptions
+(A3) and (A4), the log-likelihood for each observed block <span class="math inline">\(\ell_k\)</span> is strictly concave. Therefore,
+the population-level expected log-likelihood (replacing <span class="math inline">\(S_k\)</span> with <span class="math inline">\(\mathbb{E}[S_k] = \nu_k \Sigma^*_k\)</span>) has a
+unique maximum at <span class="math inline">\(\Sigma^{\text{obs}} =
+\Sigma^{*,\text{obs}}\)</span>. This means the observed data
+distribution uniquely identifies <span class="math inline">\(\Sigma^{\text{obs}}\)</span>.</p>
+<p><strong>Step 2: Identifiability as a Matrix Completion
+Problem.</strong></p>
+<p>The problem of identifiability reduces to the following: Given the
+set of entries <span class="math inline">\(\Sigma^{*,\text{obs}}\)</span>, is there a unique
+matrix <span class="math inline">\(\Sigma \in S^p_+\)</span> that
+“completes” these entries?</p>
+<p><strong>Step 3: Role of Graph Structure (Chordality and Clique
+Coverage).</strong></p>
+<p>This is a standard problem in matrix completion theory. A fundamental
+result (Dempster, 1972; Grone et al., 1984; Lauritzen, 1996) establishes
+that a <strong>chordal</strong> graph admits a unique positive definite
+completion when all entries on <strong>maximal cliques</strong> are
+specified. Specifically:</p>
+<ul>
+<li>If <span class="math inline">\(G\)</span> is chordal, it admits a
+<strong>clique-tree decomposition</strong> into maximal cliques <span class="math inline">\(C_1, \ldots, C_m\)</span> with separators.</li>
+<li>When we observe the full principal submatrices <span class="math inline">\(\Sigma[C_j, C_j]\)</span> for all maximal cliques,
+and these submatrices agree on their overlaps (separators), there exists
+a <strong>unique</strong> PD matrix <span class="math inline">\(\Sigma\)</span> consistent with all clique
+submatrices.</li>
+<li>This uniqueness property is the foundation of decomposable graphical
+models.</li>
+</ul>
+<p><strong>Step 4: Conclusion.</strong></p>
+<ul>
+<li>Step 1 (driven by A3, A4) ensures that each <strong>observed clique
+submatrix</strong> <span class="math inline">\(\Sigma[C, C]\)</span> is
+uniquely identified by the likelihood (strict concavity).</li>
+<li>Step 3 (driven by A1’, A2) ensures that when all maximal cliques are
+fully observed and <span class="math inline">\(G\)</span> is chordal,
+the clique submatrices uniquely determine the full <span class="math inline">\(\Sigma\)</span> via the PD constraint and
+clique-tree consistency.</li>
+<li>Connectivity (A1) ensures the graph forms a connected whole,
+allowing EM to propagate information globally.</li>
+</ul>
+<p>Therefore, the full matrix <span class="math inline">\(\Sigma^*\)</span> is locally identifiable. <span class="math inline">\(\square\)</span></p>
+</div>
+</div>
+<div id="error-analysis-and-rate-of-convergence" class="section level1">
+<h1>Error Analysis and Rate of Convergence</h1>
+<p>This section analyzes the properties of the MLE <span class="math inline">\(\hat{\Sigma}\)</span> (found via EM) in the
+vicinity of the true <span class="math inline">\(\Sigma^*\)</span>.</p>
+<div id="information-decomposition-and-asymptotic-variance" class="section level2">
+<h2>Information Decomposition and Asymptotic Variance</h2>
+<p>Let <span class="math inline">\(\theta = \text{vech}(\Sigma)\)</span>
+denote the vector of unique covariance parameters and <span class="math inline">\(\hat{\theta}\)</span> the MLE. We define:</p>
+<ul>
+<li><strong>Complete-data information</strong> <span class="math inline">\(I_{c}(\theta)\)</span>: The information if the
+full <span class="math inline">\(W_k\)</span> matrices were observed for
+all <span class="math inline">\(k\)</span></li>
+<li><strong>Observed-data information</strong> <span class="math inline">\(I_{o}(\theta)\)</span>: The actual information
+from the observed data</li>
+<li><strong>Missing information</strong>: <span class="math inline">\(I_{m}(\theta) = I_{c}(\theta) -
+I_{o}(\theta)\)</span></li>
+</ul>
+<p>Under standard regularity conditions and proportional growth of <span class="math inline">\(\nu = \sum_k \nu_k\)</span>:</p>
+<p><span class="math display">\[\sqrt{\nu}(\hat{\theta} - \theta^*)
+\xrightarrow{d} N(0, I_{o}(\theta^*)^{-1})\]</span></p>
+<p>Entries <span class="math inline">\(\Sigma_{ij}\)</span> that are
+unobserved (never jointly measured) typically have larger missing
+information components than directly observed ones, thus larger
+asymptotic variance.</p>
+<p>The exact inflation depends on: - The observation design <span class="math inline">\(\{O_k\}\)</span> - Clique sizes and separators -
+The numerical values in <span class="math inline">\(\Sigma^*\)</span></p>
+<p>There is <strong>no universal function</strong> of graph distance
+<span class="math inline">\(d_{ij}\)</span> alone that captures <span class="math inline">\(\text{Var}(\hat{\Sigma}_{ij})\)</span> without
+additional structure.</p>
+<p><strong>Heuristic 4.1</strong> (Distance-Driven Attenuation in Sparse
+Designs): In sparse, chain-like designs (e.g., trees where cliques are
+edges), simulations and regression-chain approximations suggest that
+uncertainty for an unobserved <span class="math inline">\(\Sigma_{ij}\)</span> tends to
+<strong>increase</strong> with the shortest-path length <span class="math inline">\(d_{ij}\)</span>. This should be regarded as a
+<strong>design heuristic</strong> rather than a theorem.</p>
+<p><strong>Heuristic relationship</strong> (observed in simulations of
+balanced tree/chain designs):</p>
+<p><span class="math display">\[\text{Var}(\hat{\Sigma}_{ij}) \approx
+\left(\frac{d_{ij}^2}{\nu}\right)(\Sigma^*_{ii}\Sigma^*_{jj} +
+(\Sigma^*_{ij})^2) \cdot f(\text{design}, \Sigma^*)\]</span></p>
+<p>where <span class="math inline">\(f(\text{design}, \Sigma^*)\)</span>
+is a design- and parameter-dependent factor.</p>
+<p><strong>Interpretation</strong>: Information about unobserved entries
+propagates through paths in the graph via imputation. Each step in the
+path introduces additional sources of variability, analogous to error
+propagation in a regression chain. However, this relationship is
+<strong>not universal</strong>—the exact rate depends on study sizes,
+overlap patterns, separator dimensions, and the numerical values in
+<span class="math inline">\(\Sigma^*\)</span>. It provides useful design
+intuition for sparse observation patterns.</p>
+</div>
+<div id="em-convergence-and-missing-information" class="section level2">
+<h2>EM Convergence and Missing Information</h2>
+<p><strong>Proposition 4.2</strong> (EM Linear Convergence): Under
+standard regularity conditions (compactness, continuity,
+identifiability), the EM algorithm converges linearly to the MLE <span class="math inline">\(\hat{\Sigma}\)</span> in a neighborhood of <span class="math inline">\(\Sigma^*\)</span>:</p>
+<p><span class="math display">\[|\Sigma^{(t)} - \hat{\Sigma}|_F \leq
+\rho^t |\Sigma^{(0)} - \hat{\Sigma}|_F\]</span></p>
+<p>where the contraction rate <span class="math inline">\(\rho &lt;
+1\)</span> is determined by the fraction of missing information
+(Dempster et al., 1977; Meng &amp; van Dyk, 1997).</p>
+<p>Specifically, let <span class="math inline">\(T(\theta)\)</span>
+denote the EM mapping. The EM convergence rate is governed by the rate
+matrix:</p>
+<p><span class="math display">\[R = I_{c}(\theta^*)^{-1}
+I_{m}(\theta^*)\]</span></p>
+<p>where <span class="math inline">\(\rho = \rho(R)\)</span> is its
+spectral radius, satisfying <span class="math inline">\(\rho &lt;
+1\)</span> under identifiability.</p>
+<p>Larger fractions of missing information imply slower EM
+convergence.</p>
+<p><strong>Design implications</strong>: - In designs where long paths
+are required to impute many entries, the fraction of missing information
+can be large, leading to <span class="math inline">\(\rho\)</span> close
+to 1 and empirically slow convergence. - The number of iterations to
+achieve <span class="math inline">\(\epsilon\)</span>-accuracy is <span class="math inline">\(t_\epsilon \approx
+\log(\epsilon^{-1})/\log(\rho^{-1})\)</span>. - When <span class="math inline">\(\rho \approx 1\)</span>, we recommend: - Good
+initialization (e.g., using observed pairwise correlations and the
+nearest PD matrix) - Acceleration methods (SQUAREM, quasi-Newton, or
+parameter expansion)</p>
+<p><strong>Empirical observation</strong>: In simulations with
+tree/chain designs, convergence tends to slow as <span class="math inline">\(\ell_{\max}\)</span> (maximum path length for
+unobserved entries) increases, consistent with increased missing
+information.</p>
+</div>
+<div id="positive-definiteness-constraint-and-information-region" class="section level2">
+<h2>Positive Definiteness Constraint and Information Region</h2>
+<p>The PD constraint <span class="math inline">\(\Sigma \succ 0\)</span>
+restricts the possible values of <span class="math inline">\(\Sigma_{ij}\)</span>.</p>
+<p><strong>Theorem 4.2</strong> (Feasible Region for Unobserved Entry):
+For an unobserved pair <span class="math inline">\((i,j)\)</span>
+connected by a path <span class="math inline">\(i-k-j\)</span> (a
+3-cycle, which is chordal), the PD constraint restricts <span class="math inline">\(\Sigma_{ij}\)</span> to an interval centered at
+its conditional expectation.</p>
+<p><span class="math display">\[\Sigma_{ij} \in
+\left[\Sigma_{ik}\Sigma_{kj}\Sigma_{kk}^{-1} - \sqrt{\Delta}, \quad
+\Sigma_{ik}\Sigma_{kj}\Sigma_{kk}^{-1} +
+\sqrt{\Delta}\right]\]</span></p>
+<p>where <span class="math inline">\(\Delta\)</span> is the product of
+the partial variances:</p>
+<p><span class="math display">\[\Delta = (\Sigma_{ii} -
+\Sigma_{ik}^2\Sigma_{kk}^{-1})(\Sigma_{jj} -
+\Sigma_{jk}^2\Sigma_{kk}^{-1})\]</span></p>
+<p><strong>Theorem 4.3</strong> (PD-Constrained Variance): The width of
+this feasible region <span class="math inline">\(w_{ij} =
+2\sqrt{\Delta}\)</span> is:</p>
+<p><span class="math display">\[w_{ij} = 2\sqrt{\Sigma_{ii}\Sigma_{jj}}
+\sqrt{(1-\rho_{ik}^2)(1-\rho_{kj}^2)}\]</span></p>
+<p>where <span class="math inline">\(\rho_{ik}\)</span> and <span class="math inline">\(\rho_{kj}\)</span> are the correlations. As <span class="math inline">\(|\rho_{ik}|, |\rho_{kj}| \to 1\)</span>, the
+feasible region shrinks to a point, and the imputation variance
+approaches zero.</p>
+</div>
+</div>
+<div id="bias-and-mean-squared-error" class="section level1">
+<h1>Bias and Mean Squared Error</h1>
+<div id="bias-in-em-estimates" class="section level2">
+<h2>Bias in EM Estimates</h2>
+<p><strong>Theorem 5.1</strong> (EM Bias): The MLE <span class="math inline">\(\hat{\Sigma}^{\text{EM}}\)</span> is
+asymptotically unbiased. For finite samples, the bias of an unobserved
+entry is:</p>
+<p><span class="math display">\[\text{Bias}(\hat{\Sigma}_{ij}) =
+\mathbb{E}[\hat{\Sigma}_{ij}] - \Sigma^*_{ij} =
+O\left(\frac{1}{\nu}\right)\]</span></p>
+<p>The bias is typically small and vanishes at the standard <span class="math inline">\(1/\nu\)</span> rate, regardless of the path
+length.</p>
+</div>
+<div id="mean-squared-error-decomposition" class="section level2">
+<h2>Mean Squared Error Decomposition</h2>
+<p><strong>Proposition 5.2</strong> (MSE Decomposition): The Mean
+Squared Error (MSE) of an unobserved entry is dominated by the variance
+term:</p>
+<p><span class="math display">\[\text{MSE}(\hat{\Sigma}_{ij}) =
+\text{Var}(\hat{\Sigma}_{ij}) +
+\text{Bias}^2(\hat{\Sigma}_{ij})\]</span></p>
+<p>where <span class="math inline">\(\text{Bias}^2 = O(1/\nu^2)\)</span>
+is negligible relative to variance.</p>
+<p><strong>Heuristic relationship</strong> (in path-based designs):</p>
+<p><span class="math display">\[\text{MSE}(\hat{\Sigma}_{ij}) \approx
+\left(\frac{d_{ij}^2}{\nu}\right)(\Sigma^*_{ii}\Sigma^*_{jj} +
+(\Sigma^*_{ij})^2) \cdot f(\text{design}, \Sigma^*)\]</span></p>
+<p><strong>Comparison to direct observation</strong>: For a directly
+observed entry <span class="math inline">\((i,j) \in E\)</span> (with
+total sample <span class="math inline">\(\nu\)</span>):</p>
+<p><span class="math display">\[\text{MSE}(\hat{\Sigma}_{ij}) =
+\frac{1}{\nu}(\Sigma^*_{ii}\Sigma^*_{jj} + (\Sigma^*_{ij})^2)(1 +
+o(1))\]</span></p>
+<p><strong>Heuristic efficiency loss</strong>: In balanced path-based
+designs, the MSE ratio often approximates:</p>
+<p><span class="math display">\[\frac{\text{MSE}_{\text{unobserved}}}{\text{MSE}_{\text{observed}}}
+\sim d_{ij}^2\]</span></p>
+<p>suggesting that achieving the same statistical power for an
+unobserved entry may require approximately <span class="math inline">\(d_{ij}^2\)</span> times more total samples (though
+the exact factor is design-dependent).</p>
+</div>
+</div>
+<div id="plugin-vs.-bootstrap-standard-errors" class="section level1">
+<h1>Plugin vs. Bootstrap Standard Errors</h1>
+<div id="plugin-se-limitation" class="section level2">
+<h2>Plugin SE Limitation</h2>
+<p>A “naive plugin” SE is calculated by taking the standard Wishart
+variance formula and plugging in the final MLE <span class="math inline">\(\hat{\Sigma}\)</span> and total sample <span class="math inline">\(\nu\)</span>.</p>
+<p><span class="math display">\[\text{SE}_{\text{plugin}}(\hat{\Sigma}_{ij}) =
+\sqrt{\frac{\hat{\Sigma}_{ii}\hat{\Sigma}_{jj} +
+\hat{\Sigma}_{ij}^2}{\nu}}\]</span></p>
+<p><strong>Proposition 6.1</strong> (Plugin SE Underestimation for
+Unobserved): For an unobserved entry <span class="math inline">\((i,j)
+\notin E\)</span>, the naive plugin SE systematically
+<strong>underestimates</strong> the true SE:</p>
+<p><span class="math display">\[\text{SE}_{\text{true}}(\hat{\Sigma}_{ij}) &gt;
+\text{SE}_{\text{plugin}}(\hat{\Sigma}_{ij})\]</span></p>
+<p>The degree of underestimation depends on the observation design, path
+structure, and correlation values.</p>
+<p><em>Reason</em>: The plugin formula (based on complete-data
+information) ignores the <strong>imputation variance</strong>. This is
+the “missing information principle” (Meng &amp; van Dyk, 1997): the
+variance of the MLE is greater than the inverse of the complete-data
+information. The EM algorithm’s E-step introduces this extra variance.
+In sparse designs with path-based imputation, the underestimation tends
+to be more severe for entries with longer path distances, but no
+universal multiplicative factor applies across all designs.</p>
+</div>
+<div id="bootstrap-se-validity" class="section level2">
+<h2>Bootstrap SE Validity</h2>
+<p><strong>Proposition 6.2</strong> (Bootstrap SE Consistency): Under
+standard regularity conditions (correct model specification, existence
+and uniqueness of the MLE, stable EM convergence, and <span class="math inline">\(\nu_k \to \infty\)</span> proportionally), the
+parametric bootstrap SE is a consistent estimator of the true standard
+error:</p>
+<p><span class="math display">\[\text{SE}_{\text{bootstrap}}(\hat{\Sigma}_{ij}) =
+\text{sd}\left(\{\hat{\Sigma}_{ij}^{(b)} : b=1,\ldots,B\}\right)
+\xrightarrow{p} \text{SE}_{\text{true}}(\hat{\Sigma}_{ij})\]</span></p>
+<p>where each <span class="math inline">\(\hat{\Sigma}_{ij}^{(b)}\)</span> is the full
+EM-estimated value from a bootstrap replicate <span class="math inline">\(S^{(b)} = \{S_k^{(b)}\}\)</span> sampled from the
+fitted model <span class="math inline">\(\hat{\Sigma}\)</span>.</p>
+<p><em>Justification</em>: The bootstrap procedure correctly mimics all
+sources of variance:</p>
+<ul>
+<li><strong>Sampling variance</strong>: Captured by simulating new <span class="math inline">\(S_k^{(b)} \sim \text{Wishart}(\nu_k,
+\hat{\Sigma}[O_k, O_k])\)</span>.</li>
+<li><strong>Imputation variance</strong>: Captured by running the full
+EM algorithm on each bootstrap replicate, forcing the estimator to
+re-impute the missing data in each <span class="math inline">\(b\)</span>-th sample.</li>
+</ul>
+<p>By standard bootstrap theory (Efron &amp; Tibshirani, 1993), the
+empirical standard deviation of the bootstrap replicates consistently
+estimates the true SE when the parametric model is correctly specified
+and regularity conditions hold. <span class="math inline">\(\square\)</span></p>
+</div>
+</div>
+<div id="application-to-3x3-example" class="section level1">
+<h1>Application to 3x3 Example</h1>
+<div id="explicit-formulas-for-3x3-case" class="section level2">
+<h2>Explicit Formulas for 3x3 Case</h2>
+<p><strong>Setup</strong>: Path <span class="math inline">\(1-2-3\)</span> with <span class="math inline">\((1,2)\)</span> and <span class="math inline">\((2,3)\)</span> observed, but <span class="math inline">\((1,3)\)</span> unobserved.</p>
+<ul>
+<li><strong>Path distance</strong>: <span class="math inline">\(d_{13} =
+2\)</span>.</li>
+<li><strong>Graph</strong>: <span class="math inline">\(1-2-3\)</span>
+is a 3-cycle, which is chordal. Thus, <span class="math inline">\(\Sigma_{13}\)</span> is identifiable.</li>
+</ul>
+<p><strong>Error Analysis</strong>: From Theorem 4.1, the SE is <span class="math inline">\(d_{13} = 2\)</span> times larger than a direct
+observation.</p>
+<p><span class="math display">\[\text{SE}(\hat{\Sigma}_{13}) \approx
+\frac{2}{\sqrt{\nu}}\sqrt{\Sigma_{11}\Sigma_{33} +
+\Sigma_{13}^2}\]</span></p>
+<p><strong>Numerical example</strong>: Let <span class="math inline">\(\nu = 100\)</span>, <span class="math inline">\(\Sigma_{11} = \Sigma_{33} = 1\)</span>, and <span class="math inline">\(\Sigma_{13} = 0.4\)</span>.</p>
+<ul>
+<li><strong>True SE (Bootstrap)</strong>: <span class="math inline">\(\text{SE}_{\text{true}} \approx
+\frac{2}{\sqrt{100}}\sqrt{1 \cdot 1 + 0.4^2} = 0.2 \sqrt{1.16} \approx
+\mathbf{0.2154}\)</span></li>
+<li><strong>Naive Plugin SE</strong>: <span class="math inline">\(\text{SE}_{\text{plugin}} \approx
+\frac{1}{\sqrt{100}}\sqrt{1 \cdot 1 + 0.4^2} = 0.1 \sqrt{1.16} \approx
+\mathbf{0.1077}\)</span></li>
+<li><strong>Ratio</strong>: <span class="math inline">\(\text{SE}_{\text{true}} /
+\text{SE}_{\text{plugin}} \approx 2.0\)</span>. This matches the theory
+(<span class="math inline">\(d_{13} = 2\)</span>).</li>
+</ul>
+</div>
+<div id="effective-sample-size-interpretation" class="section level2">
+<h2>Effective Sample Size Interpretation</h2>
+<p>To achieve the same statistical power (e.g., 80% power to detect
+<span class="math inline">\(\rho_{13} = 0.4\)</span>), the required
+sample size <span class="math inline">\(\nu_{\text{path}}\)</span> is
+<span class="math inline">\(d_{13}^2 = 4\)</span> times larger than for
+a direct observation <span class="math inline">\(\nu_{\text{direct}}\)</span>.</p>
+<p>If direct observation requires <span class="math inline">\(\nu_{\text{direct}} \approx 50\)</span>, this
+path-2 design requires <span class="math inline">\(\nu_{\text{path}}
+\approx 50 \times 4 = \mathbf{200}\)</span>.</p>
+</div>
+<div id="illustrative-r-code-for-bootstrap-se" class="section level2">
+<h2>Illustrative R Code for Bootstrap SE</h2>
+<p>The following code demonstrates parametric bootstrap SE estimation
+for the 3×3 chain example:</p>
+<pre class="r"><code>suppressPackageStartupMessages(library(CovCombR))
+#set.seed(123)
 
-CovList &lt;- list(
-  Study1 = cov(iris_virginica[sample(1:50, 20), c(1, 2)]),  # Sepal measurements
-  Study2 = cov(iris_virginica[sample(1:50, 25), c(1, 3)]),  # Sepal.L + Petal.L
-  Study3 = cov(iris_virginica[sample(1:50, 30), c(2, 4)])   # Sepal.W + Petal.W
-)
+# True Sigma for chain 1-2-3, with (1,3) unobserved
+Sigma_true &lt;- matrix(c(1.0, 0.9, 0.4,
+                       0.9, 1.0, 0.5,
+                       0.4, 0.5, 1.0), 3, 3, byrow = TRUE)
+var_names &lt;- c(&quot;V1&quot;, &quot;V2&quot;, &quot;V3&quot;)
+dimnames(Sigma_true) &lt;- list(var_names, var_names)
 
-CovList</code></pre>
-<pre><code>## $Study1
-##            S.L        S.W
-## S.L 0.26463158 0.03821053
-## S.W 0.03821053 0.06168421
-## 
-## $Study2
-##           S.L       P.L
-## S.L 0.4572667 0.3614833
-## P.L 0.3614833 0.3531000
-## 
-## $Study3
-##            S.W        P.W
-## S.W 0.14654023 0.06673563
-## P.W 0.06673563 0.07843678</code></pre>
-<p>The missing covariances (Sepal.Width–Petal.Length,
-Petal.Length–Petal.Width, Sepal.Length–Petal.Width) are never jointly
-observed.</p>
-</div>
-<div id="fit-the-model" class="section level3">
-<h3>Fit the Model</h3>
-<p>The default <code>n_factors = &quot;auto&quot;</code> automatically selects an
-appropriate factor model and returns the selected fit alongside a table
-of all candidates.</p>
-<pre class="r"><code>nu &lt;- c(Study1 = 19, Study2 = 24, Study3 = 29)
+nu12 &lt;- 120  # Sample size for observing (V1,V2)
+nu23 &lt;- 120  # Sample size for observing (V2,V3)
+nu_total &lt;- nu12 + nu23
 
-fit &lt;- fit_covcomb(CovList, nu = nu, se_method = &quot;none&quot;)
-fit</code></pre>
-<pre><code>## Wishart EM Covariance Combination
-## Call: fit_fa_em(S_list = S_list, nu = nu, k = kk, scale_method = scale_method, 
-##     alpha_normalization = alpha_normalization, init_sigma = init_sigma, 
-##     control = control)
-## 
-## Status: converged in 189 iterations
-## Final relative change: 9.89e-08
-## 
-## Combined covariance matrix (Sigma_hat): 4 x 4
-##   Mean diagonal: 0.2255
-##   Condition number: 4.45e+06</code></pre>
-<pre class="r"><code>fit$ic_table</code></pre>
-<pre><code>##   n_factors    loglik n_params      AIC      BIC selected
-## 1         1 -8.424902        8 32.84980 51.06313     TRUE
-## 2        NA -8.273236       10 36.54647 59.31313    FALSE</code></pre>
-<p>The IC table shows how many factors were tried and why a particular
-model was selected. The selected model is identifiable even for the
-variable pairs that were never jointly observed.</p>
-</div>
-<div id="combined-covariance-estimate" class="section level3">
-<h3>Combined Covariance Estimate</h3>
-<pre class="r"><code>round(fit$Sigma_hat, 4)</code></pre>
-<pre><code>##        P.L    P.W    S.L    S.W
-## P.L 0.3219 0.1482 0.3239 0.1099
-## P.W 0.1482 0.0682 0.1491 0.0506
-## S.L 0.3239 0.1491 0.4003 0.1105
-## S.W 0.1099 0.0506 0.1105 0.1116</code></pre>
-</div>
-<div id="compare-with-full-data" class="section level3">
-<h3>Compare with Full Data</h3>
-<pre class="r"><code>Sigma_full &lt;- cov(iris_virginica[, 1:4])
+# Generate sample covariance matrices from Wishart distribution
+# Note: fit_covcomb expects SAMPLE covariances, not Wishart matrices
+W12 &lt;- rWishart(1, nu12, Sigma_true[1:2, 1:2])[,,1]
+S12 &lt;- W12 / nu12  # Convert to sample covariance
+dimnames(S12) &lt;- list(var_names[1:2], var_names[1:2])
 
-round(Sigma_full, 4)</code></pre>
-<pre><code>##        S.L    S.W    P.L    P.W
-## S.L 0.4043 0.0938 0.3033 0.0491
-## S.W 0.0938 0.1040 0.0714 0.0476
-## P.L 0.3033 0.0714 0.3046 0.0488
-## P.W 0.0491 0.0476 0.0488 0.0754</code></pre>
-<pre class="r"><code>round(fit$Sigma_hat - Sigma_full, 4)</code></pre>
-<pre><code>##         P.L     P.W    S.L    S.W
-## P.L -0.0825  0.0544 0.0206 0.0608
-## P.W  0.0544 -0.0358 0.0778 0.0030
-## S.L  0.0206  0.0778 0.0957 0.0617
-## S.W  0.0608  0.0030 0.0617 0.0361</code></pre>
-</div>
-<div id="factor-loadings-when-a-factor-model-is-selected" class="section level3">
-<h3>Factor Loadings (when a factor model is selected)</h3>
-<pre class="r"><code>if (!is.null(fit$Lambda_hat)) {
-  round(fit$Lambda_hat, 3)
-  round(fit$Psi_hat, 3)
-}</code></pre>
-<pre><code>## [1] 0.000 0.000 0.074 0.074</code></pre>
-<p>The varimax-rotated loadings show how each variable loads onto the
-latent factors, and <code>Psi_hat</code> gives the residual (unique)
-variances.</p>
-<hr />
+W23 &lt;- rWishart(1, nu23, Sigma_true[2:3, 2:3])[,,1]
+S23 &lt;- W23 / nu23  # Convert to sample covariance
+dimnames(S23) &lt;- list(var_names[2:3], var_names[2:3])
+
+# Fit the model using EM
+S_list &lt;- list(study1 = S12, study2 = S23)
+nu &lt;- c(study1 = nu12, study2 = nu23)
+
+# n_factors = NULL: this example illustrates free-Sigma identifiability theory,
+# so the free model is fit explicitly rather than relying on auto-selection.
+fit &lt;- fit_covcomb(S_list, nu, n_factors = NULL, se_method = &quot;none&quot;)
+Sigma_hat &lt;- fit$Sigma_hat
+
+round(Sigma_hat, 3)</code></pre>
+<pre><code>##        V1    V2     V3
+## V1  1.012 0.870 -0.001
+## V2  0.870 0.967  0.451
+## V3 -0.001 0.451  0.938</code></pre>
+<pre class="r"><code># Parametric bootstrap for SE of Sigma[1,3]
+B &lt;- 50  # Use fewer bootstrap samples for vignette speed
+boot_vals &lt;- replicate(B, {
+  # Generate bootstrap samples
+  W12_b &lt;- rWishart(1, nu12, Sigma_hat[1:2, 1:2])[,,1]
+  S12_b &lt;- W12_b / nu12
+  dimnames(S12_b) &lt;- list(var_names[1:2], var_names[1:2])
+
+  W23_b &lt;- rWishart(1, nu23, Sigma_hat[2:3, 2:3])[,,1]
+  S23_b &lt;- W23_b / nu23
+  dimnames(S23_b) &lt;- list(var_names[2:3], var_names[2:3])
+
+  # Refit model
+  S_list_b &lt;- list(study1 = S12_b, study2 = S23_b)
+  fit_b &lt;- fit_covcomb(S_list_b, nu, n_factors = NULL, se_method = &quot;none&quot;)
+  fit_b$Sigma_hat[&quot;V1&quot;, &quot;V3&quot;]
+})
+
+# Bootstrap SE
+SE_boot &lt;- sd(boot_vals)
+
+# Naive plugin SE (incorrect for unobserved entry)
+SE_plugin &lt;- sqrt((Sigma_hat[&quot;V1&quot;,&quot;V1&quot;] * Sigma_hat[&quot;V3&quot;,&quot;V3&quot;] +
+                   Sigma_hat[&quot;V1&quot;,&quot;V3&quot;]^2) / nu_total)
+
+data.frame(
+  Method = c(&quot;Bootstrap&quot;, &quot;Naive plugin&quot;),
+  SE     = round(c(SE_boot, SE_plugin), 4)
+)</code></pre>
+<pre><code>##         Method     SE
+## 1    Bootstrap 0.0925
+## 2 Naive plugin 0.0629</code></pre>
+<pre class="r"><code>SE_boot / SE_plugin  # ratio: bootstrap SE relative to naive plugin SE</code></pre>
+<pre><code>## [1] 1.470804</code></pre>
+<p><strong>Result interpretation</strong>: The bootstrap SE is
+<strong>larger</strong> than the naive plugin SE, confirming that plugin
+SEs underestimate uncertainty for unobserved entries. The observed ratio
+(~1.0–2×) depends on the specific design parameters (sample sizes,
+correlation structure, and numerical values in <span class="math inline">\(\Sigma^*\)</span>). The heuristic prediction of a
+factor-of-<span class="math inline">\(d_{ij}\)</span> underestimation
+provides the right directional guidance (bootstrap SE &gt; plugin SE),
+but the exact factor varies across designs.</p>
+<p><strong>Key insight</strong>: The plugin SE only accounts for
+sampling variance (as if <span class="math inline">\(\Sigma_{13}\)</span> were directly observed),
+while the bootstrap SE correctly captures both sampling variance and EM
+imputation uncertainty. For formal inference on unobserved entries,
+always use bootstrap SEs.</p>
 </div>
 </div>
-<div id="more-realistic-scenario-different-sample-sizes" class="section level2">
-<h2>More Realistic Scenario: Different Sample Sizes</h2>
-<pre class="r"><code>set.seed(2025)
-
-CovList2 &lt;- list(
-  Small  = cov(iris_virginica[sample(1:50, 10), c(1, 2)]),
-  Medium = cov(iris_virginica[sample(1:50, 25), c(2, 3)]),
-  Large  = cov(iris_virginica[sample(1:50, 45), c(3, 4)])
-)
-nu2 &lt;- c(Small = 9, Medium = 24, Large = 44)
-
-fit2 &lt;- fit_covcomb(CovList2, nu = nu2, se_method = &quot;none&quot;)
-fit2</code></pre>
-<pre><code>## Wishart EM Covariance Combination
-## Call: fit_fa_em(S_list = S_list, nu = nu, k = kk, scale_method = scale_method, 
-##     alpha_normalization = alpha_normalization, init_sigma = init_sigma, 
-##     control = control)
-## 
-## Status: converged in 179 iterations
-## Final relative change: 9.89e-08
-## 
-## Combined covariance matrix (Sigma_hat): 4 x 4
-##   Mean diagonal: 0.2187
-##   Condition number: 1.44e+06</code></pre>
-<pre class="r"><code>round(fit2$Sigma_hat, 4)</code></pre>
-<pre><code>##         P.L     P.W     S.L     S.W
-## P.L  0.3019  0.0404 -0.3549  0.0676
-## P.W  0.0404  0.0594 -0.0475  0.0091
-## S.L -0.3549 -0.0475  0.4172 -0.0795
-## S.W  0.0676  0.0091 -0.0795  0.0964</code></pre>
-<p>The algorithm automatically weights studies by their degrees of
-freedom.</p>
-<hr />
-</div>
-<div id="bootstrap-standard-errors" class="section level2">
-<h2>Bootstrap Standard Errors</h2>
-<p>For formal inference — particularly for entries never jointly
-observed — bootstrap standard errors are recommended.</p>
-<pre class="r"><code>set.seed(1234)
-
-CovList_boot &lt;- list(
-  Study1 = cov(iris_virginica[sample(1:50, 25), c(1, 2, 3)]),
-  Study2 = cov(iris_virginica[sample(1:50, 30), c(2, 3, 4)]),
-  Study3 = cov(iris_virginica[sample(1:50, 20), c(1, 3, 4)])
-)
-nu_boot &lt;- c(Study1 = 24, Study2 = 29, Study3 = 19)
-
-fit_boot &lt;- fit_covcomb(
-  CovList_boot,
-  nu = nu_boot,
-  n_factors = NULL,  # free model: bootstrap SE is implemented for the free-Sigma path
-  se_method = &quot;bootstrap&quot;,
-  control = list(bootstrap = list(B = 100, seed = 1234, progress = FALSE, verbose = FALSE))
-)
-
-round(fit_boot$Sigma_se, 4)</code></pre>
-<pre><code>##        P.L    P.W    S.L    S.W
-## P.L 0.0519 0.0198 0.0580 0.0238
-## P.W 0.0198 0.0127 0.0236 0.0210
-## S.L 0.0580 0.0236 0.0712 0.0296
-## S.W 0.0238 0.0210 0.0296 0.0190</code></pre>
-<pre class="r"><code>fit_boot$bootstrap[c(&quot;B&quot;, &quot;successes&quot;, &quot;failures&quot;)]</code></pre>
-<pre><code>## $B
-## [1] 100
-## 
-## $successes
-## [1] 81
-## 
-## $failures
-## [1] 19</code></pre>
-<p>Bootstrap standard errors account for both sampling variance and EM
-imputation uncertainty.</p>
-<hr />
-</div>
-<div id="summary" class="section level2">
-<h2>Summary</h2>
-<p>The <code>CovCombR</code> workflow:</p>
+<div id="summary-theorem" class="section level1">
+<h1>Summary Theorem</h1>
+<p><strong>Theorem 8.1</strong> (Complete Identifiability with Error
+Characterization): Under assumptions (A1-A4) plus the key assumption
+(A1’) that <span class="math inline">\(G\)</span> is chordal <strong>and
+all maximal cliques are fully observed</strong>:</p>
 <ol style="list-style-type: decimal">
-<li>Provide sample covariance matrices from each study (as from
-<code>cov(X)</code>)</li>
-<li>Specify degrees of freedom (sample size − 1) for each study</li>
-<li>Call <code>fit_covcomb()</code> — the default
-<code>n_factors = &quot;auto&quot;</code> selects an identifiable model</li>
-<li>Use <code>fit$Sigma_hat</code> for downstream analysis;
-<code>fit$ic_table</code> to review model selection</li>
-<li>Add <code>se_method = &quot;bootstrap&quot;</code> for publication-quality
-uncertainty quantification</li>
+<li><strong>Local Identifiability</strong>: All entries of <span class="math inline">\(\Sigma\)</span> (both <span class="math inline">\(\Sigma^{\text{obs}}\)</span> and <span class="math inline">\(\Sigma^{\text{unobs}}\)</span>) are locally
+uniquely identified via the PD constraint and clique-tree
+decomposition.</li>
+<li><strong>Convergence Rate</strong>: The EM algorithm converges
+linearly to the MLE <span class="math inline">\(\hat{\Sigma}\)</span>
+with rate <span class="math inline">\(\rho &lt; 1\)</span> determined by
+the fraction of missing information (Meng &amp; van Dyk, 1997).
+Empirically, <span class="math inline">\(\rho\)</span> tends toward 1 as
+<span class="math inline">\(\ell_{\max}\)</span> increases.</li>
+<li><strong>MSE Heuristic for Unobserved Entries</strong>: In sparse
+path-based designs, <span class="math inline">\(\text{MSE}(\hat{\Sigma}_{ij})\)</span> tends to
+scale approximately as <span class="math inline">\(\frac{d_{ij}^2}{\nu}(\Sigma_{ii}\Sigma_{jj} +
+\Sigma_{ij}^2) \cdot f(\text{design}, \Sigma)\)</span> where <span class="math inline">\(f\)</span> is design-dependent. This is
+<strong>not a universal formula</strong> but provides useful design
+intuition.</li>
+<li><strong>Bias</strong>: <span class="math inline">\(\text{Bias}(\hat{\Sigma}_{ij}) = O(1/\nu)\)</span>
+under regularity conditions and is negligible relative to variance.</li>
+<li><strong>SE Comparison</strong>:
+<ul>
+<li>Naive plugin SEs systematically underestimate the true SE for
+unobserved entries (missing information principle).</li>
+<li>Bootstrap SEs are consistent estimators under standard
+regularity.</li>
+</ul></li>
+<li><strong>Power Analysis Heuristic</strong>: In designs with
+path-based imputation, achieving the same statistical power for an
+unobserved pair <span class="math inline">\((i,j)\)</span> versus a
+directly observed pair often requires approximately <span class="math inline">\(d_{ij}^2\)</span> times more total samples, though
+the exact factor is design-dependent.</li>
 </ol>
 </div>
-<div id="references" class="section level2">
-<h2>References</h2>
+<div id="conditions-for-validity-and-breakdown-cases" class="section level1">
+<h1>Conditions for Validity and Breakdown Cases</h1>
+<div id="when-theorems-apply-strictly" class="section level2">
+<h2>When Theorems Apply Strictly</h2>
+<p>The theorems in this document apply when:</p>
+<ol style="list-style-type: decimal">
+<li>The observation graph <span class="math inline">\(G\)</span> is
+connected and chordal, <strong>and all maximal cliques are fully
+observed</strong> as principal submatrices.</li>
+<li>Samples are sufficient (<span class="math inline">\(\nu_k &gt;
+p_k\)</span> for all <span class="math inline">\(k\)</span>).</li>
+<li>The true <span class="math inline">\(\Sigma^*\)</span> is
+well-conditioned (not near-singular, correlations <span class="math inline">\(|\rho| &lt; 0.95\)</span>).</li>
+</ol>
+<p><strong>Note</strong>: Several quantitative results (information
+scaling with path distance, EM convergence bounds, power analysis
+factors) are presented as <strong>heuristics</strong> based on
+simulations and special cases, not as universal theorems.</p>
+</div>
+<div id="boundary-cases-where-theory-breaks-down" class="section level2">
+<h2>Boundary Cases Where Theory Breaks Down</h2>
+<p><strong>Case 1: Disconnected Graph</strong>. Any <span class="math inline">\(\Sigma_{ij}\)</span> where <span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span> are in different components is
+non-identifiable.</p>
+<p><strong>Case 2: Non-Chordal Graph</strong>. If <span class="math inline">\(G\)</span> is connected but not chordal (e.g., a
+4-cycle <span class="math inline">\(1-2-3-4-1\)</span> with <span class="math inline">\(\Sigma_{13}, \Sigma_{24}\)</span> missing), <span class="math inline">\(\Sigma^{\text{unobs}}\)</span> is
+non-identifiable. The set of valid PD completions forms an interval or
+convex set. The EM algorithm will converge to an arbitrary point, often
+dependent on initialization.</p>
+<p><strong>Case 3: Edge-Only Observation on Chordal Graphs</strong>.
+Even when <span class="math inline">\(G\)</span> is chordal, observing
+only edges <span class="math inline">\((i,j) \in E\)</span> and
+diagonals (without fully observed clique submatrices) is generally
+insufficient for uniqueness. For example, in a tree (which is chordal),
+pairwise covariances and variances do not uniquely determine the full
+covariance matrix without additional structural assumptions (e.g.,
+sparsity in the precision matrix <span class="math inline">\(\Sigma^{-1}\)</span>, which is a Gaussian
+graphical model assumption not made here). Identifiability requires that
+all maximal cliques be fully observed as principal submatrices.</p>
+<p><strong>Case 4: Very Long Paths</strong> (<span class="math inline">\(d_{ij} \gg 1\)</span>). Estimates <span class="math inline">\(\hat{\Sigma}_{ij}\)</span> for entries with very
+long path distances have extremely high variance, making them
+practically useless. The EM algorithm will also converge very slowly as
+<span class="math inline">\(\ell_{\max}\)</span> increases due to
+increased missing information.</p>
+<p><strong>Case 5: Extreme Correlations</strong> (<span class="math inline">\(|\rho| \to 1\)</span>). The PD constraint region
+(Theorem 4.3) narrows, and <span class="math inline">\(\Sigma^*\)</span>
+is near the boundary of <span class="math inline">\(S^p_+\)</span>. This
+creates high curvature in the likelihood and numerical instability.</p>
+<p><strong>Case 6: Very Small Samples</strong> (<span class="math inline">\(\nu_k &lt; p_k\)</span>). The Wishart distribution
+is degenerate. The MLE is not well-defined without regularization (e.g.,
+an informative inverse-Wishart prior or penalization).</p>
+</div>
+</div>
+<div id="mathematical-appendix-lemmas-and-proofs" class="section level1">
+<h1>Mathematical Appendix: Lemmas and Proofs</h1>
+<p><strong>Lemma A.1</strong> (Schur Complement Inverse): For <span class="math inline">\(\Sigma \succ 0\)</span> partitioned as <span class="math inline">\(\Sigma = \begin{pmatrix} A &amp; B \\ B^T &amp; C
+\end{pmatrix}\)</span>, the inverse is:</p>
+<p><span class="math display">\[\Sigma^{-1} = \begin{pmatrix} (A -
+BC^{-1}B^T)^{-1} &amp; -A^{-1}B(C - B^TA^{-1}B)^{-1} \\ -(C -
+B^TA^{-1}B)^{-1}B^TA^{-1} &amp; (C - B^TA^{-1}B)^{-1}
+\end{pmatrix}\]</span></p>
+<p><strong>Lemma A.2</strong> (Conditional Wishart Expectations for
+E-step): Let <span class="math inline">\(W \sim \text{Wishart}(\nu,
+\Sigma)\)</span>. Partition <span class="math inline">\(W\)</span> and
+<span class="math inline">\(\Sigma\)</span> according to an observed
+block ‘1’ and a missing block ‘2’: <span class="math inline">\(W =
+\begin{pmatrix} W_{11} &amp; W_{12} \\ W_{21} &amp; W_{22}
+\end{pmatrix}\)</span> and <span class="math inline">\(\Sigma =
+\begin{pmatrix} \Sigma_{11} &amp; \Sigma_{12} \\ \Sigma_{21} &amp;
+\Sigma_{22} \end{pmatrix}\)</span>.</p>
+<p>The conditional expectations of the missing blocks given the observed
+block <span class="math inline">\(W_{11}\)</span> (which corresponds to
+<span class="math inline">\(S_k\)</span> in the main text) are:</p>
+<p><strong>Imputed Cross-Block</strong>:</p>
+<p><span class="math display">\[\mathbb{E}[W_{21} \mid W_{11}] =
+\Sigma_{21}\Sigma_{11}^{-1} W_{11}\]</span></p>
+<p><strong>Imputed Missing-Block</strong>:</p>
+<p><span class="math display">\[\mathbb{E}[W_{22} \mid W_{11}] = \nu
+\Sigma_{22.1} + \Sigma_{21}\Sigma_{11}^{-1} W_{11}
+\Sigma_{11}^{-1}\Sigma_{12}\]</span></p>
+<p>where <span class="math inline">\(\Sigma_{22.1} = \Sigma_{22} -
+\Sigma_{21}\Sigma_{11}^{-1}\Sigma_{12}\)</span> is the Schur complement
+of <span class="math inline">\(\Sigma_{11}\)</span> in <span class="math inline">\(\Sigma\)</span>.</p>
+<p><em>Proof</em>: These are standard results from multivariate
+statistics, often derived from the properties of the conditional
+Gaussian distribution. <span class="math inline">\(\square\)</span></p>
+</div>
+<div id="references" class="section level1">
+<h1>References</h1>
+<p><strong>Matrix Completion and Chordal Graphs:</strong></p>
 <ul>
-<li>Anderson, T. W. (2003). <em>An Introduction to Multivariate
-Statistical Analysis</em> (3rd ed.). Wiley.</li>
-<li>Rubin, D. B., &amp; Thayer, D. T. (1982). EM algorithms for ML
-factor analysis. <em>Psychometrika</em>, 47(1), 69–76.</li>
+<li>Dempster, A. P. (1972). Covariance selection. <em>Biometrics</em>,
+28(1), 157–175.</li>
+<li>Grone, R., Johnson, C. R., Sá, E. M., &amp; Wolkowicz, H. (1984).
+Positive definite completions of partial Hermitian matrices. <em>Linear
+Algebra and its Applications</em>, 58, 109–124.</li>
+<li>Lauritzen, S. L. (1996). <em>Graphical Models</em>. Oxford
+University Press.</li>
+</ul>
+<p><strong>EM Algorithm and Missing Information:</strong></p>
+<ul>
+<li>Dempster, A. P., Laird, N. M., &amp; Rubin, D. B. (1977). Maximum
+likelihood from incomplete data via the EM algorithm. <em>Journal of the
+Royal Statistical Society: Series B</em>, 39(1), 1–38.</li>
+<li>Louis, T. A. (1982). Finding the observed information matrix when
+using the EM algorithm. <em>Journal of the Royal Statistical Society:
+Series B</em>, 44(2), 226–233.</li>
+<li>Meng, X.-L., &amp; van Dyk, D. (1997). The EM algorithm—an old
+folk-song sung to a fast new tune. <em>Journal of the Royal Statistical
+Society: Series B</em>, 59(3), 511–567.</li>
 <li>McLachlan, G. J., &amp; Krishnan, T. (2008). <em>The EM Algorithm
 and Extensions</em> (2nd ed.). Wiley.</li>
 </ul>
-</div>
-<div id="session-information" class="section level2">
-<h2>Session Information</h2>
-<pre class="r"><code>sessionInfo()</code></pre>
-<pre><code>## R version 4.4.1 (2024-06-14)
-## Platform: aarch64-apple-darwin20
-## Running under: macOS 26.5.1
-## 
-## Matrix products: default
-## BLAS:   /Library/Frameworks/R.framework/Versions/4.4-arm64/Resources/lib/libRblas.0.dylib 
-## LAPACK: /Library/Frameworks/R.framework/Versions/4.4-arm64/Resources/lib/libRlapack.dylib;  LAPACK version 3.12.0
-## 
-## locale:
-## [1] C.UTF-8/C.UTF-8/C.UTF-8/C/C.UTF-8/C.UTF-8
-## 
-## time zone: America/New_York
-## tzcode source: internal
-## 
-## attached base packages:
-## [1] stats     graphics  grDevices utils     datasets  methods   base     
-## 
-## other attached packages:
-## [1] CovCombR_1.5.0 testthat_3.2.3
-## 
-## loaded via a namespace (and not attached):
-##  [1] jsonlite_2.0.0    miniUI_0.1.1.1    compiler_4.4.1    brio_1.1.5       
-##  [5] promises_1.3.2    Rcpp_1.1.1        jquerylib_0.1.4   later_1.4.1      
-##  [9] yaml_2.3.10       fastmap_1.2.0     mime_0.13         R6_2.6.1         
-## [13] knitr_1.50        htmlwidgets_1.6.4 desc_1.4.3        profvis_0.4.0    
-## [17] rprojroot_2.0.4   shiny_1.11.1      bslib_0.9.0       rlang_1.1.6      
-## [21] cachem_1.1.0      xfun_0.54         httpuv_1.6.15     sass_0.4.10      
-## [25] fs_1.6.6          pkgload_1.4.0     memoise_2.0.1     cli_3.6.5        
-## [29] withr_3.0.2       magrittr_2.0.4    digest_0.6.37     rstudioapi_0.17.1
-## [33] xtable_1.8-4      remotes_2.5.0     devtools_2.4.5    lifecycle_1.0.4  
-## [37] vctrs_0.6.5       evaluate_1.0.5    glue_1.8.0        urlchecker_1.0.1 
-## [41] sessioninfo_1.2.3 pkgbuild_1.4.6    rmarkdown_2.30    purrr_1.1.0      
-## [45] tools_4.4.1       usethis_3.1.0     ellipsis_0.3.2    htmltools_0.5.8.1</code></pre>
+<p><strong>Bootstrap Theory:</strong></p>
+<ul>
+<li>Efron, B., &amp; Tibshirani, R. J. (1993). <em>An Introduction to
+the Bootstrap</em>. Chapman &amp; Hall/CRC.</li>
+</ul>
 </div>
 
 

@@ -320,18 +320,20 @@ logchol_to_sigma <- function(theta) {
 jacobian_logchol_to_sigma <- function(theta) {
   p <- (sqrt(1 + 8 * length(theta)) - 1) / 2
   p <- as.integer(round(p))
-  Sigma <- logchol_to_sigma(theta)
 
-  # Compute Jacobian using numerical differentiation
-  # This is more robust than deriving analytical formulas
+  # Central differences give O(h^2) accuracy vs O(h) for forward differences,
+  # matching the accuracy of the Hessian used in compute_complete_data_info.
   J <- matrix(0, p^2, length(theta))
 
-  h <- 1e-8
+  h <- 1e-5
   for (k in seq_along(theta)) {
     theta_plus <- theta
     theta_plus[k] <- theta_plus[k] + h
-    Sigma_plus <- logchol_to_sigma(theta_plus)
-    J[, k] <- as.vector((Sigma_plus - Sigma) / h)
+    theta_minus <- theta
+    theta_minus[k] <- theta_minus[k] - h
+    Sigma_plus  <- logchol_to_sigma(theta_plus)
+    Sigma_minus <- logchol_to_sigma(theta_minus)
+    J[, k] <- as.vector((Sigma_plus - Sigma_minus) / (2 * h))
   }
 
   J
@@ -399,11 +401,15 @@ compute_se_sem <- function(fit_result, S_list, nu,
   I_com <- compute_complete_data_info(theta_hat, internal_data, ridge)
 
   # Step 3: Estimate EM rate matrix R via finite differences
+  # Pass alpha_hat so the EM map is evaluated at the true fixed point;
+  # without this, scale_method = "estimate" silently uses alpha = 1.
   R <- compute_em_rate_matrix(theta_hat, S_list, nu, scale_method,
-                              alpha_normalization, h, ridge)
+                              alpha_normalization, alpha_hat = alpha_hat,
+                              h = h, ridge = ridge)
 
   # Step 4: Compute observed information
-  # I_obs = I_com^{1/2} (I - R) I_com^{1/2}
+  # Correct formula (Meng & Rubin 1991): I_obs = (I - R) * I_com
+  # where I_mis = R * I_com, so I_obs = I_com - R * I_com
   # Check spectral radius of R first
   eig_R <- eigen(R, symmetric = FALSE, only.values = TRUE)$values
   spectral_radius_R <- max(Mod(eig_R))
@@ -416,10 +422,10 @@ compute_se_sem <- function(fit_result, S_list, nu,
     )
   }
 
-  I_com_sqrt <- matrix_sqrt(I_com, ridge)
   I_minus_R <- diag(d_theta) - R
 
-  # Check if (I - R) is positive definite
+  # Check if (I - R) leads to a positive definite I_obs
+  # (I - R) * I_com should be PD when the EM algorithm is contractive
   eig_I_minus_R <- eigen(I_minus_R, symmetric = FALSE, only.values = TRUE)$values
   if (any(Re(eig_I_minus_R) <= 0)) {
     warning(
@@ -429,7 +435,7 @@ compute_se_sem <- function(fit_result, S_list, nu,
     )
     I_obs <- I_com
   } else {
-    I_obs <- I_com_sqrt %*% I_minus_R %*% I_com_sqrt
+    I_obs <- I_minus_R %*% I_com
   }
 
   # Symmetrize to correct numerical errors
@@ -630,6 +636,9 @@ compute_Q_function <- function(theta, theta_ref, internal_data, ridge = 1e-8) {
 #' @param nu Degrees of freedom vector
 #' @param scale_method Scaling method
 #' @param alpha_normalization Alpha normalization method
+#' @param alpha_hat Named numeric vector of converged scale factors (required
+#'   when \code{scale_method = "estimate"} so that the EM map is evaluated at
+#'   the true fixed point).
 #' @param h Step size for finite differences
 #' @param ridge Ridge parameter
 #'
@@ -637,14 +646,15 @@ compute_Q_function <- function(theta, theta_ref, internal_data, ridge = 1e-8) {
 #'
 #' @keywords internal
 compute_em_rate_matrix <- function(theta_hat, S_list, nu, scale_method,
-                                   alpha_normalization, h = 1e-6,
-                                   ridge = 1e-8) {
+                                   alpha_normalization, alpha_hat = NULL,
+                                   h = 1e-6, ridge = 1e-8) {
   d_theta <- length(theta_hat)
   R <- matrix(0, d_theta, d_theta)
 
   # Compute M(theta_hat) - should equal theta_hat at convergence
   M_hat <- em_map_one_step(theta_hat, S_list, nu, scale_method,
-                           alpha_normalization, ridge)
+                           alpha_normalization, alpha_hat = alpha_hat,
+                           ridge = ridge)
 
   # Compute columns of R by finite differences
   for (j in 1:d_theta) {
@@ -652,7 +662,8 @@ compute_em_rate_matrix <- function(theta_hat, S_list, nu, scale_method,
     theta_pert[j] <- theta_pert[j] + h
 
     M_pert <- em_map_one_step(theta_pert, S_list, nu, scale_method,
-                              alpha_normalization, ridge)
+                              alpha_normalization, alpha_hat = alpha_hat,
+                              ridge = ridge)
 
     R[, j] <- (M_pert - M_hat) / h
   }
@@ -670,19 +681,36 @@ compute_em_rate_matrix <- function(theta_hat, S_list, nu, scale_method,
 #' @param nu Degrees of freedom
 #' @param scale_method Scaling method
 #' @param alpha_normalization Alpha normalization
+#' @param alpha_hat Named numeric vector of converged scale factors. When
+#'   \code{scale_method = "estimate"}, these must be the converged alpha values
+#'   so that the EM map is evaluated at the true fixed point. When \code{NULL}
+#'   (or \code{scale_method = "none"}), all alphas default to 1.
 #' @param ridge Ridge parameter
 #'
 #' @return Updated parameters theta_new after one EM iteration
 #'
 #' @keywords internal
 em_map_one_step <- function(theta, S_list, nu, scale_method,
-                            alpha_normalization, ridge = 1e-8) {
+                            alpha_normalization, alpha_hat = NULL,
+                            ridge = 1e-8) {
   # Convert theta to Sigma
   Sigma <- logchol_to_sigma(theta)
 
-  # Preprocess data
+  # Preprocess data (alpha_k initialised to 1 by .preprocess_data)
   internal_data <- .preprocess_data(S_list, nu, scale_method,
                                     alpha_normalization)
+
+  # Inject converged alpha values so the E-step is evaluated at the true
+  # fixed point. Without this, when scale_method = "estimate" the E-step
+  # uses alpha = 1 instead of the converged estimates, meaning M(theta_hat)
+  # != theta_hat and the finite-difference Jacobian is wrong.
+  if (!is.null(alpha_hat)) {
+    for (id in names(alpha_hat)) {
+      if (!is.null(internal_data$samples[[id]])) {
+        internal_data$samples[[id]]$alpha_k <- alpha_hat[[id]]
+      }
+    }
+  }
 
   # E-step
   w_tilde_list <- lapply(internal_data$samples, function(s) {
@@ -692,6 +720,10 @@ em_map_one_step <- function(theta, S_list, nu, scale_method,
   # M-step
   m_result <- .m_step(w_tilde_list, internal_data, Sigma, ridge = ridge)
   Sigma_new <- m_result$sigma_new
+
+  # Project to PD before log-Cholesky conversion to avoid chol() failure
+  # on near-singular matrices produced by perturbed EM steps.
+  Sigma_new <- .project_to_pd(Sigma_new, min_eigen = ridge)
 
   # Convert back to log-cholesky
   theta_new <- sigma_to_logchol(Sigma_new)

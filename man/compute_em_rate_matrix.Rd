@@ -10,6 +10,7 @@ compute_em_rate_matrix(
   nu,
   scale_method,
   alpha_normalization,
+  alpha_hat = NULL,
   h = 1e-06,
   ridge = 1e-08
 )
@@ -24,6 +25,10 @@ compute_em_rate_matrix(
 \item{scale_method}{Scaling method}
 
 \item{alpha_normalization}{Alpha normalization method}
+
+\item{alpha_hat}{Named numeric vector of converged scale factors (required
+when \code{scale_method = "estimate"} so that the EM map is evaluated at
+the true fixed point).}
 
 \item{h}{Step size for finite differences}
 

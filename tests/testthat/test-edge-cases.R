@@ -20,6 +20,7 @@ test_that("Single sample converges correctly", {
   fit <- fit_covcomb(
     S_list = list(s1 = S),
     nu = c(s1 = nu),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "none"
   )
@@ -62,6 +63,7 @@ test_that("Two samples with no overlap", {
   fit <- fit_covcomb(
     S_list = list(s1 = S1, s2 = S2),
     nu = c(s1 = nu, s2 = nu),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "none"
   )
@@ -104,6 +106,7 @@ test_that("All samples observe same variables", {
   fit <- fit_covcomb(
     S_list = S_list,
     nu = setNames(rep(nu, 3), names(S_list)),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "none"
   )
@@ -135,6 +138,7 @@ test_that("Very small sample size (nu)", {
   fit <- fit_covcomb(
     S_list = list(s1 = S),
     nu = c(s1 = nu),
+    n_factors = NULL,
     se_method = "plugin"
   )
   
@@ -165,10 +169,11 @@ test_that("Very large sample size (nu)", {
   fit <- fit_covcomb(
     S_list = list(s1 = S),
     nu = c(s1 = nu),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "plugin"
   )
-  
+
   # Should be very close to the sample covariance S
   # (S is already sample covariance, not Wishart matrix)
   rel_error <- norm(fit$Sigma_hat - S, "F") / norm(S, "F")
@@ -206,9 +211,10 @@ test_that("Minimum overlap case", {
   fit <- fit_covcomb(
     S_list = list(s1 = S1, s2 = S2),
     nu = c(s1 = nu, s2 = nu),
+    n_factors = NULL,
     se_method = "none"
   )
-  
+
   expect_true(fit$convergence$converged)
   expect_true(all(eigen(fit$Sigma_hat)$values > 0))
   

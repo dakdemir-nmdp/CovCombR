@@ -11,7 +11,7 @@
 
 <meta name="author" content="Deniz Akdemir" />
 
-<meta name="date" content="2025-11-23" />
+<meta name="date" content="2026-07-01" />
 
 <title>Statistical Methods for CovCombR</title>
 
@@ -354,7 +354,7 @@ display: none;
 <h3 class="subtitle">EM Algorithm for Combining Incomplete Covariance
 Matrices</h3>
 <h4 class="author">Deniz Akdemir</h4>
-<h4 class="date">2025-11-23</h4>
+<h4 class="date">2026-07-01</h4>
 
 </div>
 
@@ -367,7 +367,7 @@ Matrices</h3>
 data across multiple studies, experiments, or platforms. Each study may
 measure a different (but overlapping) subset of variables, creating an
 <strong>incomplete data pattern</strong>. Direct pooling or naive
-stitching of these matrices often produces:</p>
+stitching of these matrices produces:</p>
 <ol style="list-style-type: decimal">
 <li><strong>Non-positive definite</strong> results (mathematical
 inconsistency)</li>
@@ -375,1640 +375,339 @@ inconsistency)</li>
 dependencies</li>
 <li><strong>Loss of information</strong> from discarding incomplete
 observations</li>
+<li><strong>Unidentified parameters</strong> when variable pairs are
+never jointly observed</li>
 </ol>
-<p>The CovCombR package solves this problem using a principled
-statistical framework based on the Wishart distribution and the
-Expectation-Maximization (EM) algorithm.</p>
+<p>The CovCombR package solves this using a principled Wishart EM
+framework. The key addition in version 1.6+ is a <strong>factor-model
+parameterization</strong> that extends identifiability to variable pairs
+that are never directly observed together.</p>
 </div>
 <div id="mathematical-setup" class="section level2">
 <h2>Mathematical Setup</h2>
-<div id="data-generation-model" class="section level3">
-<h3>Data Generation Model</h3>
-<p>We observe <span class="math inline">\(K\)</span> independent
-Wishart-distributed random matrices:</p>
-<p><span class="math display">\[\mathbf{W}_k \sim \text{Wishart}(\nu_k,
-\alpha_k \gamma \boldsymbol{\Sigma}), \quad k = 1, \ldots,
-K\]</span></p>
-<p>where:</p>
-<ul>
-<li><span class="math inline">\(\mathbf{W}_k \in \mathbb{R}^{p \times
-p}\)</span> is the complete (unobserved) Wishart matrix for study <span class="math inline">\(k\)</span></li>
-<li><span class="math inline">\(\nu_k &gt; p-1\)</span> is the degrees
-of freedom (sample size minus 1)</li>
-<li><span class="math inline">\(\boldsymbol{\Sigma} \in \mathbb{R}^{p
-\times p}\)</span> is the <strong>common per-degree-of-freedom scale
-matrix</strong> (our target parameter)</li>
-<li><span class="math inline">\(\alpha_k &gt; 0\)</span> is a
-study-specific scale factor (optional, default = 1)</li>
-<li><span class="math inline">\(\gamma &gt; 0\)</span> is a global scale
-parameter matching data scale</li>
-<li><span class="math inline">\(p\)</span> is the total number of
-variables across all studies</li>
-</ul>
-</div>
-<div id="incomplete-observations" class="section level3">
-<h3>Incomplete Observations</h3>
-<p>We do <strong>not</strong> observe the complete <span class="math inline">\(\mathbf{W}_k\)</span>. Instead, we observe only a
-principal submatrix:</p>
-<p><span class="math display">\[\mathbf{S}_k =
-\mathbf{W}_k[\mathcal{O}_k, \mathcal{O}_k] \in \mathbb{R}^{p_k \times
-p_k}\]</span></p>
-<p>where:</p>
-<ul>
-<li><span class="math inline">\(\mathcal{O}_k \subset \{1, 2, \ldots,
-p\}\)</span> is the set of observed variable indices in study <span class="math inline">\(k\)</span></li>
-<li><span class="math inline">\(p_k = |\mathcal{O}_k|\)</span> is the
-number of observed variables in study <span class="math inline">\(k\)</span></li>
-<li><span class="math inline">\(\mathcal{M}_k = \{1, \ldots, p\}
-\setminus \mathcal{O}_k\)</span> is the set of missing variable
-indices</li>
-</ul>
-<p>The observed data likelihood is:</p>
+<p>We observe <span class="math inline">\(K\)</span> independent sample
+covariance matrices, each over a subset of <span class="math inline">\(p\)</span> total variables:</p>
 <p><span class="math display">\[\mathbf{S}_k \sim
-\text{Wishart}\left(\nu_k, (\alpha_k \gamma
-\boldsymbol{\Sigma})[\mathcal{O}_k, \mathcal{O}_k]\right)\]</span></p>
-<p>where <span class="math inline">\(\boldsymbol{\Sigma}[\mathcal{O}_k,
-\mathcal{O}_k]\)</span> denotes the <span class="math inline">\(p_k
-\times p_k\)</span> principal submatrix of <span class="math inline">\(\boldsymbol{\Sigma}\)</span> corresponding to
-observed variables.</p>
-</div>
-<div id="key-assumptions" class="section level3">
-<h3>Key Assumptions</h3>
-<ol style="list-style-type: decimal">
-<li><strong>Common Covariance Structure:</strong> All studies share the
-same underlying per-df scale <span class="math inline">\(\boldsymbol{\Sigma}\)</span></li>
-<li><strong>Independence:</strong> Wishart samples <span class="math inline">\(\mathbf{S}_1, \ldots, \mathbf{S}_K\)</span> are
-mutually independent</li>
-<li><strong>Missing at Random (MAR):</strong> Missingness pattern <span class="math inline">\(\mathcal{O}_k\)</span> is non-informative about
-parameter values</li>
-<li><strong>Positive Definiteness:</strong> True <span class="math inline">\(\boldsymbol{\Sigma} \succ 0\)</span> (positive
-definite)</li>
-<li><strong>Sufficient Overlap:</strong> Enough variable pairs are
-jointly observed for identifiability</li>
-</ol>
-</div>
-<div id="goal" class="section level3">
-<h3>Goal</h3>
+\text{Wishart}\!\left(\nu_k,\,
+(\alpha_k\,\boldsymbol{\Sigma})[\mathcal{O}_k,\mathcal{O}_k]\right),
+\quad k = 1, \ldots, K\]</span></p>
+<p>where <span class="math inline">\(\mathcal{O}_k \subset
+\{1,\ldots,p\}\)</span> is the set of observed variables in study <span class="math inline">\(k\)</span>, <span class="math inline">\(\nu_k\)</span> is the degrees of freedom, <span class="math inline">\(\alpha_k &gt; 0\)</span> is a study-specific scale
+factor, and <span class="math inline">\(\boldsymbol{\Sigma} \in
+\mathbb{R}^{p \times p}\)</span> is the common per-df covariance to be
+estimated.</p>
+<div id="the-goal" class="section level3">
+<h3>The Goal</h3>
 <p>Estimate the complete <span class="math inline">\(p \times p\)</span>
-covariance matrix <span class="math inline">\(\boldsymbol{\Sigma}\)</span> by maximizing the
-observed-data log-likelihood:</p>
+covariance <span class="math inline">\(\boldsymbol{\Sigma}\)</span> by
+maximising the observed-data log-likelihood:</p>
 <p><span class="math display">\[\mathcal{L}(\boldsymbol{\Sigma},
-\{\alpha_k\}, \gamma \mid \{\mathbf{S}_k\}) = \sum_{k=1}^K \log
-p(\mathbf{S}_k \mid \boldsymbol{\Sigma}, \alpha_k, \gamma,
-\nu_k)\]</span></p>
-<p>Since this likelihood involves incomplete data, we employ the
-<strong>EM algorithm</strong> to iteratively estimate <span class="math inline">\(\boldsymbol{\Sigma}\)</span>, <span class="math inline">\(\{\alpha_k\}\)</span>, and <span class="math inline">\(\gamma\)</span>.</p>
+\{\alpha_k\} \mid \{\mathbf{S}_k\}) = \sum_{k=1}^K \log
+p\!\left(\mathbf{S}_k \mid \boldsymbol{\Sigma},\, \alpha_k,\,
+\nu_k\right)\]</span></p>
 </div>
 </div>
 </div>
-<div id="the-em-algorithm" class="section level1">
-<h1>The EM Algorithm</h1>
-<div id="overview-of-the-em-framework" class="section level2">
-<h2>Overview of the EM Framework</h2>
-<p>The Expectation-Maximization (EM) algorithm is an iterative method
-for maximum likelihood estimation when data are incomplete. The
-algorithm alternates between:</p>
-<ol style="list-style-type: decimal">
-<li><strong>E-step (Expectation):</strong> Compute the expected value of
-the complete-data log-likelihood given observed data and current
-parameter estimates</li>
-<li><strong>M-step (Maximization):</strong> Update parameters by
-maximizing the expected complete-data log-likelihood</li>
-</ol>
-<p>The EM algorithm guarantees <strong>monotonic increase</strong> in
-the observed-data log-likelihood at each iteration, ensuring convergence
-to at least a local maximum.</p>
+<div id="identifiability" class="section level1">
+<h1>Identifiability</h1>
+<div id="the-free-boldsymbolsigma-model" class="section level2">
+<h2>The Free-<span class="math inline">\(\boldsymbol{\Sigma}\)</span>
+Model</h2>
+<p>When <span class="math inline">\(\boldsymbol{\Sigma}\)</span> is
+unconstrained (free), the entry <span class="math inline">\(\sigma_{ij}\)</span> appears in the likelihood
+only when variables <span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span> are <strong>jointly observed in at
+least one study</strong>. If the pair <span class="math inline">\((i,j)\)</span> is never observed together, <span class="math inline">\(\sigma_{ij}\)</span> is absent from the
+likelihood: the EM finds a fixed point, but that fixed point depends
+entirely on initialization. Different starting values give different
+answers. The parameter is <strong>not identified</strong>.</p>
+<p>The observation pattern can be represented as a graph <span class="math inline">\(G\)</span> where vertices are variables and edges
+connect pairs jointly observed in at least one study. The free-<span class="math inline">\(\boldsymbol{\Sigma}\)</span> model is fully
+identified if and only if <span class="math inline">\(G\)</span> is the
+<strong>complete graph</strong> (every pair is an edge).</p>
 </div>
-<div id="complete-data-likelihood" class="section level2">
-<h2>Complete-Data Likelihood</h2>
-<p>If we had observed the complete Wishart matrices <span class="math inline">\(\mathbf{W}_1, \ldots, \mathbf{W}_K\)</span>, the
-log-likelihood would be:</p>
-<p><span class="math display">\[\ell_{\text{complete}}(\boldsymbol{\Sigma},
-\{\alpha_k\}, \gamma) = \sum_{k=1}^K \log p(\mathbf{W}_k \mid
-\boldsymbol{\Sigma}, \alpha_k, \gamma, \nu_k)\]</span></p>
-<p>The Wishart log-likelihood for a single sample (including normalizing
-constants) is:</p>
-<p><span class="math display">\[\log p(\mathbf{W}_k \mid
-\boldsymbol{\Sigma}, \alpha_k, \gamma, \nu_k) = C_k + \frac{\nu_k - p -
-1}{2} \log|\mathbf{W}_k| - \frac{\nu_k}{2}
-\log|\alpha_k\gamma\boldsymbol{\Sigma}| - \frac{1}{2\alpha_k\gamma}
-\text{tr}(\boldsymbol{\Sigma}^{-1} \mathbf{W}_k)\]</span></p>
-<p>where the normalizing constant is:</p>
-<p><span class="math display">\[C_k = -\frac{\nu_k p}{2} \log(2) -
-\frac{p(p-1)}{4} \log(\pi) - \sum_{j=1}^p \log \Gamma\left(\frac{\nu_k +
-1 - j}{2}\right)\]</span></p>
-<p><strong>Note:</strong> The CovCombR implementation (v1.5.0+) includes
-these constant terms in the log-likelihood computation for accurate
-model comparison and diagnostic purposes. Prior versions omitted
-constants, which is valid for optimization but not for likelihood ratio
-tests or information criteria (AIC, BIC).</p>
-<p>The complete-data sufficient statistics are:</p>
-<p><span class="math display">\[T(\mathbf{W}_1, \ldots, \mathbf{W}_K) =
-\left\{\sum_{k=1}^K \mathbf{W}_k, \nu_1, \ldots,
-\nu_K\right\}\]</span></p>
+<div id="the-factor-model" class="section level2">
+<h2>The Factor Model</h2>
+<p>Under a <span class="math inline">\(k\)</span>-factor model,</p>
+<p><span class="math display">\[\boldsymbol{\Sigma} =
+\boldsymbol{\Lambda}\boldsymbol{\Lambda}^\top +
+\boldsymbol{\Psi}\]</span></p>
+<p>where <span class="math inline">\(\boldsymbol{\Lambda} \in
+\mathbb{R}^{p \times k}\)</span> holds factor loadings and <span class="math inline">\(\boldsymbol{\Psi} =
+\text{diag}(\psi_1,\ldots,\psi_p) &gt; 0\)</span> holds unique
+variances. The covariance between variables <span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span> decomposes as:</p>
+<p><span class="math display">\[\sigma_{ij} =
+\boldsymbol{\Lambda}[i,\cdot]\cdot\boldsymbol{\Lambda}[j,\cdot], \qquad
+i \neq j\]</span></p>
+<p>The crucial insight: <span class="math inline">\(\boldsymbol{\Lambda}[i,\cdot]\)</span> is
+determined by the studies that observe variable <span class="math inline">\(i\)</span> alongside other variables; <span class="math inline">\(\boldsymbol{\Lambda}[j,\cdot]\)</span> is
+determined by the studies that observe <span class="math inline">\(j\)</span>. If variables <span class="math inline">\(\{i, a, b\}\)</span> appear together in one study
+and variables <span class="math inline">\(\{j, a, b\}\)</span> appear
+together in another, both loading vectors are identified through the
+shared anchors <span class="math inline">\(a, b\)</span>. Then <span class="math inline">\(\sigma_{ij} =
+\boldsymbol{\Lambda}[i,\cdot]\cdot\boldsymbol{\Lambda}[j,\cdot]\)</span>
+is identified even though <span class="math inline">\((i,j)\)</span> are
+never jointly observed.</p>
+<div id="identification-condition-under-the-factor-model" class="section level3">
+<h3>Identification condition under the factor model</h3>
+<p>A <span class="math inline">\(k\)</span>-factor model for the chain
+design (Study 1 observes <span class="math inline">\(\{i, a\}\)</span>;
+Study 2 observes <span class="math inline">\(\{j, a\}\)</span>)
+identifies <span class="math inline">\(\sigma_{ij}\)</span> through the
+single shared variable <span class="math inline">\(a\)</span>, provided
+<span class="math inline">\(k=1\)</span>. With <span class="math inline">\(k\)</span> factors and enough shared variables the
+condition generalises: there must be at least <span class="math inline">\(k\)</span> variables observed alongside both <span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span> across the study collection.</p>
+<p><strong>Example (3-variable chain, <span class="math inline">\(k=1\)</span>):</strong></p>
+<p>Study 1 observes <span class="math inline">\((V_1, V_2)\)</span>:
+identifies <span class="math inline">\(\lambda_1 \lambda_2 =
+\sigma_{12}\)</span>. Study 2 observes <span class="math inline">\((V_2,
+V_3)\)</span>: identifies <span class="math inline">\(\lambda_2
+\lambda_3 = \sigma_{23}\)</span>. Predicted: <span class="math inline">\(\sigma_{13} = \lambda_1\lambda_3\)</span>,
+identified through the shared anchor <span class="math inline">\(V_2\)</span>.</p>
 </div>
+</div>
+<div id="when-the-free-model-is-recovered" class="section level2">
+<h2>When the Free Model Is Recovered</h2>
+<p>The free-<span class="math inline">\(\boldsymbol{\Sigma}\)</span>
+model is a special case of the factor model when <span class="math inline">\(k\)</span> is large enough that the factor
+parameterisation saturates the degrees of freedom of <span class="math inline">\(\boldsymbol{\Sigma}\)</span>. The saturation point
+is:</p>
+<p><span class="math display">\[k_{\max} = \left\lfloor\frac{2p + 1 -
+\sqrt{8p+1}}{2}\right\rfloor\]</span></p>
+<p>For <span class="math inline">\(p = 5\)</span> this is <span class="math inline">\(k_{\max} = 3\)</span>; for <span class="math inline">\(p = 10\)</span> it is <span class="math inline">\(k_{\max} = 7\)</span>. Beyond <span class="math inline">\(k_{\max}\)</span> the factor model has at least as
+many free parameters as <span class="math inline">\(\boldsymbol{\Sigma}\)</span>, and AIC/BIC will
+penalise the additional complexity.</p>
+</div>
+<div id="automatic-model-selection-n_factors-auto" class="section level2">
+<h2>Automatic Model Selection (<code>n_factors = &quot;auto&quot;</code>)</h2>
+<p>The default behaviour fits models for <span class="math inline">\(k =
+1, 2, \ldots, k_{\max}\)</span> and also the unconstrained free-<span class="math inline">\(\boldsymbol{\Sigma}\)</span> model, then selects
+by BIC:</p>
+<p><span class="math display">\[\text{BIC}(k) = -2\hat\ell_k +
+\log\!\left(\textstyle\sum_k \nu_k\right)\cdot d_k\]</span></p>
+<p>where <span class="math inline">\(d_k\)</span> is the number of free
+parameters:</p>
+<table>
+<thead>
+<tr class="header">
+<th>Model</th>
+<th>Free parameters <span class="math inline">\(d\)</span></th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><span class="math inline">\(k\)</span>-factor</td>
+<td><span class="math inline">\(pk - k(k-1)/2 + p\)</span></td>
+</tr>
+<tr class="even">
+<td>Free <span class="math inline">\(\boldsymbol{\Sigma}\)</span></td>
+<td><span class="math inline">\(p(p+1)/2\)</span></td>
+</tr>
+<tr class="odd">
+<td>Either (with scale estimation)</td>
+<td><span class="math inline">\(+\,(K-1)\)</span> for <span class="math inline">\(\{\alpha_k\}\)</span></td>
+</tr>
+</tbody>
+</table>
+<p>AIC can be requested instead via <code>control$ic = &quot;AIC&quot;</code>. The
+selected model and a table of all candidates are returned in
+<code>fit$ic_table</code>.</p>
+</div>
+</div>
+<div id="the-wishart-em-algorithm" class="section level1">
+<h1>The Wishart EM Algorithm</h1>
 <div id="e-step-conditional-expectations" class="section level2">
 <h2>E-Step: Conditional Expectations</h2>
-<div id="theoretical-foundation" class="section level3">
-<h3>Theoretical Foundation</h3>
-<p>The E-step exploits the <strong>partitioned Wishart
-distribution</strong> theory. When <span class="math inline">\(\mathbf{W} \sim \text{Wishart}(\nu,
-\boldsymbol{\Sigma})\)</span> and we partition:</p>
-<p><span class="math display">\[\mathbf{W} = \begin{pmatrix}
-\mathbf{W}_{OO} &amp; \mathbf{W}_{OM} \\ \mathbf{W}_{MO} &amp;
-\mathbf{W}_{MM} \end{pmatrix}, \quad \boldsymbol{\Sigma} =
-\begin{pmatrix} \boldsymbol{\Sigma}_{OO} &amp; \boldsymbol{\Sigma}_{OM}
-\\ \boldsymbol{\Sigma}_{MO} &amp; \boldsymbol{\Sigma}_{MM}
-\end{pmatrix}\]</span></p>
-<p>then the <strong>conditional distribution</strong> of the missing
-blocks given the observed block is:</p>
-<p><span class="math display">\[\mathbf{W}_{MO} \mid \mathbf{W}_{OO}
-\sim \text{Matrix Normal}(\mathbf{B} \mathbf{W}_{OO},
-\boldsymbol{\Delta}, \mathbf{W}_{OO})\]</span></p>
-<p><span class="math display">\[\mathbf{W}_{MM} \mid \mathbf{W}_{OO}
-\sim \text{Wishart}(\nu - p_O, \boldsymbol{\Delta}) + \mathbf{B}
-\mathbf{W}_{OO} \mathbf{B}^T\]</span></p>
-<p>where:</p>
-<ul>
-<li><span class="math inline">\(\mathbf{B} = \boldsymbol{\Sigma}_{MO}
-\boldsymbol{\Sigma}_{OO}^{-1}\)</span> are the <strong>regression
-coefficients</strong> (multivariate linear predictor)</li>
-<li><span class="math inline">\(\boldsymbol{\Delta} =
-\boldsymbol{\Sigma}_{MM} - \mathbf{B} \boldsymbol{\Sigma}_{OM}\)</span>
-is the <strong>Schur complement</strong> (residual covariance after
-conditioning)</li>
-</ul>
+<p>The E-step exploits the partitioned Wishart conditional distribution.
+When <span class="math inline">\(\mathbf{W} \sim \text{Wishart}(\nu,
+\boldsymbol{\Sigma})\)</span> and we partition into observed (<span class="math inline">\(O_k\)</span>) and missing (<span class="math inline">\(M_k\)</span>) blocks:</p>
+<p><strong>Observed block (deterministic):</strong> <span class="math display">\[\mathbb{E}[\mathbf{W}_k[\mathcal{O}_k,\mathcal{O}_k]
+\mid \mathbf{S}_k] = \mathbf{S}_k\]</span></p>
+<p><strong>Off-diagonal blocks:</strong> <span class="math display">\[\mathbb{E}[\mathbf{W}_k[\mathcal{M}_k,\mathcal{O}_k]
+\mid \mathbf{S}_k] = \mathbf{B}_k\,\mathbf{S}_k,
+\qquad \mathbf{B}_k =
+\boldsymbol{\Sigma}_{M_kO_k}\,\boldsymbol{\Sigma}_{O_kO_k}^{-1}\]</span></p>
+<p><strong>Missing block:</strong> <span class="math display">\[\mathbb{E}[\mathbf{W}_k[\mathcal{M}_k,\mathcal{M}_k]
+\mid \mathbf{S}_k]
+  = (\nu_k - p_{O_k})\,\alpha_k\,\boldsymbol{\Delta}_k +
+\mathbf{B}_k\,\mathbf{S}_k\,\mathbf{B}_k^\top\]</span></p>
+<p>where <span class="math inline">\(\boldsymbol{\Delta}_k =
+\boldsymbol{\Sigma}_{M_kM_k} -
+\mathbf{B}_k\,\boldsymbol{\Sigma}_{O_kM_k}\)</span> is the Schur
+complement and <span class="math inline">\(p_{O_k} =
+|\mathcal{O}_k|\)</span>.</p>
+<p>This E-step is <strong>identical</strong> for both the free-<span class="math inline">\(\boldsymbol{\Sigma}\)</span> and factor models; it
+operates on the current <span class="math inline">\(\boldsymbol{\Sigma}
+= \boldsymbol{\Lambda}\boldsymbol{\Lambda}^\top +
+\boldsymbol{\Psi}\)</span> without any change.</p>
 </div>
-<div id="e-step-computation" class="section level3">
-<h3>E-Step Computation</h3>
-<p>Given current parameter estimates <span class="math inline">\(\boldsymbol{\Sigma}^{(t)}\)</span>, <span class="math inline">\(\{\alpha_k^{(t)}\}\)</span>, and <span class="math inline">\(\gamma^{(t)}\)</span>, we compute the
-<strong>expected complete-data sufficient statistic</strong>:</p>
-<p><span class="math display">\[Q(\boldsymbol{\Sigma}, \{\alpha_k\},
-\gamma \mid \boldsymbol{\Sigma}^{(t)}, \{\alpha_k^{(t)}\}, \gamma^{(t)})
-= \mathbb{E}_{\mathbf{W}_k|\mathbf{S}_k,
-\boldsymbol{\Sigma}^{(t)}}[\ell_{\text{complete}}(\boldsymbol{\Sigma},
-\{\alpha_k\}, \gamma)]\]</span></p>
-<p>For each study <span class="math inline">\(k\)</span>, we compute the
-expected complete Wishart matrix <span class="math inline">\(\tilde{\mathbf{W}}_k^{(t)} =
-\mathbb{E}[\mathbf{W}_k \mid \mathbf{S}_k, \boldsymbol{\Sigma}^{(t)},
-\alpha_k^{(t)}, \gamma^{(t)}]\)</span>.</p>
-</div>
-<div id="block-wise-conditional-expectations" class="section level3">
-<h3>Block-wise Conditional Expectations</h3>
-<p>For study <span class="math inline">\(k\)</span> with observed set
-<span class="math inline">\(\mathcal{O}_k\)</span> and missing set <span class="math inline">\(\mathcal{M}_k\)</span>:</p>
-<p><strong>Observed block (deterministic):</strong> <span class="math display">\[\mathbb{E}[\mathbf{W}_k[\mathcal{O}_k,
-\mathcal{O}_k] \mid \mathbf{S}_k] = \mathbf{S}_k\]</span></p>
-<p><strong>Off-diagonal blocks (linear prediction):</strong> <span class="math display">\[\mathbb{E}[\mathbf{W}_k[\mathcal{M}_k,
-\mathcal{O}_k] \mid \mathbf{S}_k] = \mathbf{B}_k^{(t)}
-\mathbf{S}_k\]</span></p>
-<p><span class="math display">\[\mathbb{E}[\mathbf{W}_k[\mathcal{O}_k,
-\mathcal{M}_k] \mid \mathbf{S}_k] = \mathbf{S}_k
-(\mathbf{B}_k^{(t)})^T\]</span></p>
-<p><strong>Unobserved block (Wishart conditional + quadratic
-form):</strong> <span class="math display">\[\mathbb{E}[\mathbf{W}_k[\mathcal{M}_k,
-\mathcal{M}_k] \mid \mathbf{S}_k] = \nu_k \alpha_k^{(t)} \gamma^{(t)}
-\boldsymbol{\Delta}_k^{(t)} + \mathbf{B}_k^{(t)} \mathbf{S}_k
-(\mathbf{B}_k^{(t)})^T\]</span></p>
-<p>where:</p>
-<ul>
-<li><span class="math inline">\(\mathbf{B}_k^{(t)} =
-\boldsymbol{\Sigma}^{(t)}[\mathcal{M}_k, \mathcal{O}_k] \cdot
-(\boldsymbol{\Sigma}^{(t)}[\mathcal{O}_k,
-\mathcal{O}_k])^{-1}\)</span></li>
-<li><span class="math inline">\(\boldsymbol{\Delta}_k^{(t)} =
-\boldsymbol{\Sigma}^{(t)}[\mathcal{M}_k, \mathcal{M}_k] -
-\mathbf{B}_k^{(t)} \boldsymbol{\Sigma}^{(t)}[\mathcal{O}_k,
-\mathcal{M}_k]\)</span></li>
-</ul>
-</div>
-<div id="implementation-notes" class="section level3">
-<h3>Implementation Notes</h3>
-<ol style="list-style-type: decimal">
-<li><strong>Matrix Inversion:</strong> <span class="math inline">\((\boldsymbol{\Sigma}_{OO})^{-1}\)</span> is
-computed via Cholesky decomposition for numerical stability</li>
-<li><strong>Ridge Regularization:</strong> Adds <span class="math inline">\(\lambda \mathbf{I}\)</span> (default <span class="math inline">\(\lambda = 10^{-8}\)</span>) before inversion to
-handle near-singularity</li>
-<li><strong>Symmetry Enforcement:</strong> The filled-in <span class="math inline">\(\tilde{\mathbf{W}}_k\)</span> is symmetrized:
-<span class="math inline">\(\frac{1}{2}(\tilde{\mathbf{W}}_k +
-\tilde{\mathbf{W}}_k^T)\)</span></li>
-<li><strong>Sparse Patterns:</strong> If <span class="math inline">\(|\mathcal{M}_k| = 0\)</span> (no missing
-variables), the E-step simply returns <span class="math inline">\(\mathbf{S}_k\)</span></li>
-</ol>
-<p>The result is a collection of “pseudo-complete” data matrices <span class="math inline">\(\{\tilde{\mathbf{W}}_1^{(t)}, \ldots,
-\tilde{\mathbf{W}}_K^{(t)}\}\)</span>, each of size <span class="math inline">\(p \times p\)</span>.</p>
-</div>
-</div>
-<div id="m-step-parameter-updates" class="section level2">
-<h2>M-Step: Parameter Updates</h2>
-<p>The M-step maximizes the Q-function (expected complete-data
-log-likelihood) with respect to parameters <span class="math inline">\(\boldsymbol{\Sigma}\)</span>, <span class="math inline">\(\{\alpha_k\}\)</span>, and <span class="math inline">\(\gamma\)</span>.</p>
-<div id="covariance-update" class="section level3">
-<h3>Covariance Update</h3>
-<p>The maximum likelihood estimator for <span class="math inline">\(\boldsymbol{\Sigma}\)</span> given pseudo-complete
-data is:</p>
+<div id="m-step-free-boldsymbolsigma-model" class="section level2">
+<h2>M-Step: Free-<span class="math inline">\(\boldsymbol{\Sigma}\)</span> Model</h2>
+<p>Given the imputed pseudo-complete matrices <span class="math inline">\(\{\tilde{\mathbf{W}}_k\}\)</span>, the M-step for
+the free model is a closed-form weighted average:</p>
 <p><span class="math display">\[\boldsymbol{\Sigma}^{(t+1)} =
-\frac{1}{\sum_{k=1}^K \nu_k} \sum_{k=1}^K \frac{1}{\alpha_k^{(t)}}
-\tilde{\mathbf{W}}_k^{(t)}\]</span></p>
-<p><strong>Interpretation:</strong> This is a <strong>weighted
-average</strong> of the pseudo-complete Wishart matrices, where:</p>
-<ul>
-<li>Each <span class="math inline">\(\tilde{\mathbf{W}}_k\)</span>
-contributes proportionally to its degrees of freedom <span class="math inline">\(\nu_k\)</span></li>
-<li>The scale factor <span class="math inline">\(\alpha_k^{-1}\)</span>
-adjusts for heterogeneous scaling across studies</li>
-<li>The denominator <span class="math inline">\(\sum \nu_k\)</span>
-normalizes to produce the per-degree-of-freedom scale</li>
-</ul>
-<p><strong>Derivation:</strong> Taking the derivative of <span class="math inline">\(Q(\boldsymbol{\Sigma} \mid \cdot)\)</span> with
-respect to <span class="math inline">\(\boldsymbol{\Sigma}\)</span> and
-setting to zero yields the above solution.</p>
+\frac{1}{\sum_k \nu_k} \sum_{k=1}^K
+\frac{\tilde{\mathbf{W}}_k}{\alpha_k}\]</span></p>
 </div>
-<div id="scale-factor-update-when-scale_method-estimate" class="section level3">
-<h3>Scale Factor Update (when
-<code>scale_method = &quot;estimate&quot;</code>)</h3>
-<p>When estimating study-specific scale factors, we solve:</p>
+<div id="m-step-factor-model-rubinthayer-1982" class="section level2">
+<h2>M-Step: Factor Model (Rubin–Thayer 1982)</h2>
+<p>For the factor model the M-step updates <span class="math inline">\((\boldsymbol{\Lambda}, \boldsymbol{\Psi})\)</span>
+given the sufficient statistic:</p>
+<p><span class="math display">\[\mathbf{T} = \frac{1}{\sum_k
+\nu_k}\sum_{k=1}^K \frac{\tilde{\mathbf{W}}_k}{\alpha_k}\]</span></p>
+<p>The Rubin–Thayer EM steps are iterated until convergence:</p>
+<ol style="list-style-type: decimal">
+<li><p>Compute the <strong>factor regression matrix</strong> (<span class="math inline">\(k \times p\)</span>): <span class="math display">\[\boldsymbol{\Phi} =
+\left(\boldsymbol{\Lambda}^\top
+\boldsymbol{\Psi}^{-1}\boldsymbol{\Lambda} + \mathbf{I}_k\right)^{-1}
+\boldsymbol{\Lambda}^\top \boldsymbol{\Psi}^{-1}\]</span></p></li>
+<li><p>Update loadings: <span class="math display">\[\boldsymbol{\Lambda}_{\text{new}} =
+\mathbf{T}\,\boldsymbol{\Phi}^\top
+\left(\boldsymbol{\Phi}\,\mathbf{T}\,\boldsymbol{\Phi}^\top +
+\mathbf{I}_k -
+\boldsymbol{\Phi}\boldsymbol{\Lambda}\right)^{-1}\]</span></p></li>
+<li><p>Update unique variances: <span class="math display">\[\boldsymbol{\Psi}_{\text{new}} =
+\text{diag}\!\left(\mathbf{T} -
+\boldsymbol{\Lambda}_{\text{new}}\,\boldsymbol{\Phi}\,\mathbf{T}\right),
+\qquad \psi_i \geq 10^{-8}\]</span></p></li>
+</ol>
+<p>This is a nested EM: the outer loop imputes missing Wishart blocks;
+the inner loop finds the FA MLE of <span class="math inline">\((\boldsymbol{\Lambda}, \boldsymbol{\Psi})\)</span>
+given <span class="math inline">\(\mathbf{T}\)</span>.</p>
+<p>After convergence, <span class="math inline">\(\boldsymbol{\Lambda}\)</span> is rotated to
+varimax orientation for interpretability (<span class="math inline">\(k
+&gt; 1\)</span>). Rotation does not change <span class="math inline">\(\boldsymbol{\Sigma} =
+\boldsymbol{\Lambda}\boldsymbol{\Lambda}^\top +
+\boldsymbol{\Psi}\)</span>.</p>
+</div>
+<div id="scale-factor-update-scale_method-estimate" class="section level2">
+<h2>Scale Factor Update (<code>scale_method = &quot;estimate&quot;</code>)</h2>
+<p>When study-specific scale factors <span class="math inline">\(\alpha_k\)</span> are estimated, a
+coordinate-ascent inner loop (up to 25 iterations) alternates
+between:</p>
 <p><span class="math display">\[\alpha_k^{(t+1)} = \frac{1}{\nu_k p}
-\text{tr}\left((\boldsymbol{\Sigma}^{(t+1)})^{-1}
-\tilde{\mathbf{W}}_k^{(t)}\right)\]</span></p>
-<p><strong>Implementation:</strong> The algorithm uses a
-<strong>coordinate ascent</strong> approach:</p>
-<ol style="list-style-type: decimal">
-<li>Fix <span class="math inline">\(\{\alpha_k\}\)</span>, update <span class="math inline">\(\boldsymbol{\Sigma}\)</span></li>
-<li>Fix <span class="math inline">\(\boldsymbol{\Sigma}\)</span>, update
-each <span class="math inline">\(\alpha_k\)</span></li>
-<li>Iterate until convergence (inner loop, max 25 iterations, tolerance
-<span class="math inline">\(10^{-6}\)</span>)</li>
-</ol>
-<p>This nested optimization ensures monotonic likelihood increase while
-handling the coupling between <span class="math inline">\(\boldsymbol{\Sigma}\)</span> and <span class="math inline">\(\{\alpha_k\}\)</span>.</p>
-<p><strong>Constraints:</strong> <span class="math inline">\(\alpha_k\)</span> is constrained to <span class="math inline">\(\alpha_k \geq 10^{-8}\)</span> to prevent
-numerical instability.</p>
-</div>
-<div id="global-scale-parameter-update" class="section level3">
-<h3>Global Scale Parameter Update</h3>
-<p>After updating <span class="math inline">\(\boldsymbol{\Sigma}\)</span> and <span class="math inline">\(\{\alpha_k\}\)</span>, we estimate the global
-scale parameter <span class="math inline">\(\gamma\)</span> via maximum
-likelihood using the <strong>observed data</strong> <span class="math inline">\(\{\mathbf{S}_k\}\)</span> (not the pseudo-complete
-data):</p>
-<p><span class="math display">\[\gamma^{(t+1)} = \frac{\sum_{k=1}^K
-\frac{1}{\alpha_k^{(t+1)}}
-\text{tr}\left((\boldsymbol{\Sigma}^{(t+1)}[\mathcal{O}_k,
-\mathcal{O}_k])^{-1} \mathbf{S}_k\right)}{\sum_{k=1}^K \nu_k
-p_k}\]</span></p>
-<p>where <span class="math inline">\(p_k = |\mathcal{O}_k|\)</span> is
-the number of observed variables in study <span class="math inline">\(k\)</span>.</p>
-<p><strong>Purpose:</strong> The parameter <span class="math inline">\(\gamma\)</span> rescales <span class="math inline">\(\boldsymbol{\Sigma}\)</span> to match the
-<strong>data scale</strong>. Specifically:</p>
-<ul>
-<li><span class="math inline">\(\boldsymbol{\Sigma}\)</span> is
-estimated on a “per-degree-of-freedom” scale (parameter scale)</li>
-<li>The combined output <span class="math inline">\(\hat{\mathbf{S}} =
-\gamma \hat{\boldsymbol{\Sigma}}\)</span> is on the data scale (useful
-for prediction)</li>
-</ul>
-<p><strong>Rationale:</strong> When <code>scale_method = &quot;none&quot;</code>,
-the EM algorithm estimates <span class="math inline">\(\boldsymbol{\Sigma}\)</span> without
-pre-normalization. The MLE for <span class="math inline">\(\gamma\)</span> ensures that the scaled estimate
-matches the average observed variance level across studies.</p>
-</div>
-<div id="scale-method-options" class="section level3">
-<h3>Scale Method Options</h3>
-<p>The <code>scale_method</code> parameter controls how heterogeneous
-scaling is handled:</p>
-<ol style="list-style-type: decimal">
-<li><p><strong><code>&quot;none&quot;</code> (default):</strong> No
-pre-standardization. Only global <span class="math inline">\(\gamma\)</span> is estimated. Use when studies
-have similar variance scales.</p></li>
-<li><p><strong><code>&quot;estimate&quot;:</code></strong> Jointly estimate
-study-specific scale factors <span class="math inline">\(\{\alpha_k\}\)</span> and <span class="math inline">\(\boldsymbol{\Sigma}\)</span> via nested coordinate
-ascent. Use when scale heterogeneity is of scientific interest or when
-studies differ substantially in measurement units.</p></li>
-</ol>
-</div>
-<div id="positive-definiteness-projection" class="section level3">
-<h3>Positive Definiteness Projection</h3>
-<p>After each M-step, <span class="math inline">\(\boldsymbol{\Sigma}^{(t+1)}\)</span> is projected
-to the positive definite cone:</p>
-<p><span class="math display">\[\boldsymbol{\Sigma}_{\text{PD}} =
-\mathbf{V} \max(\boldsymbol{\Lambda}, \lambda_{\min} \mathbf{I})
-\mathbf{V}^T\]</span></p>
-<p>where <span class="math inline">\(\boldsymbol{\Sigma}^{(t+1)} =
-\mathbf{V} \boldsymbol{\Lambda} \mathbf{V}^T\)</span> is the
-eigendecomposition and <span class="math inline">\(\lambda_{\min} =
-10^{-10}\)</span> (default) is the minimum eigenvalue threshold.</p>
-<p><strong>Purpose:</strong> Numerical errors can occasionally produce
-negative or zero eigenvalues. This projection guarantees <span class="math inline">\(\boldsymbol{\Sigma} \succ 0\)</span> while
-minimally perturbing the matrix.</p>
-</div>
+\,\text{tr}\!\left((\boldsymbol{\Sigma}^{(t+1)})^{-1}\,\tilde{\mathbf{W}}_k\right)\]</span></p>
+<p>subject to a geometric-mean normalisation <span class="math inline">\(\bigl(\prod_k \alpha_k\bigr)^{1/K} = 1\)</span>
+(default) or arithmetic-mean normalisation <span class="math inline">\(\bar{\alpha} = 1\)</span>.</p>
 </div>
 <div id="convergence" class="section level2">
 <h2>Convergence</h2>
-<div id="theoretical-guarantee" class="section level3">
-<h3>Theoretical Guarantee</h3>
-<p>The EM algorithm guarantees <strong>monotonic increase</strong> of
-the observed-data log-likelihood:</p>
-<p><span class="math display">\[\mathcal{L}(\boldsymbol{\Sigma}^{(t+1)},
-\{\alpha_k^{(t+1)}\}, \gamma^{(t+1)} \mid \{\mathbf{S}_k\}) \geq
-\mathcal{L}(\boldsymbol{\Sigma}^{(t)}, \{\alpha_k^{(t)}\}, \gamma^{(t)}
-\mid \{\mathbf{S}_k\})\]</span></p>
-<p>with equality only at convergence. This follows from the <strong>EM
-ascent property</strong>:</p>
-<p><span class="math display">\[\mathcal{L}(\boldsymbol{\theta}^{(t+1)})
-- \mathcal{L}(\boldsymbol{\theta}^{(t)}) \geq
-Q(\boldsymbol{\theta}^{(t+1)} \mid \boldsymbol{\theta}^{(t)}) -
-Q(\boldsymbol{\theta}^{(t)} \mid \boldsymbol{\theta}^{(t)}) \geq
-0\]</span></p>
-<p>Because the likelihood is bounded above (by the data) and increases
-at each iteration, the algorithm <strong>converges to at least a local
-maximum</strong>.</p>
-</div>
-<div id="convergence-criterion" class="section level3">
-<h3>Convergence Criterion</h3>
-<p>The algorithm monitors <strong>relative changes</strong> in both
-<span class="math inline">\(\boldsymbol{\Sigma}\)</span> and <span class="math inline">\(\gamma\)</span>:</p>
-<p><span class="math display">\[\Delta_{\boldsymbol{\Sigma}}^{(t)} =
-\frac{\|\boldsymbol{\Sigma}^{(t+1)} -
-\boldsymbol{\Sigma}^{(t)}\|_F}{\|\boldsymbol{\Sigma}^{(t)}\|_F}\]</span></p>
-<p><span class="math display">\[\Delta_{\gamma}^{(t)} =
-\frac{|\gamma^{(t+1)} - \gamma^{(t)}|}{|\gamma^{(t)}|}\]</span></p>
-<p>The algorithm <strong>stops</strong> when:</p>
-<p><span class="math display">\[\max(\Delta_{\boldsymbol{\Sigma}}^{(t)},
-\Delta_{\gamma}^{(t)}) &lt; \epsilon\]</span></p>
-<p>where <span class="math inline">\(\epsilon = 10^{-7}\)</span>
-(default tolerance).</p>
-<p><strong>Alternative Criterion:</strong> The user can also monitor the
-relative change in log-likelihood:</p>
-<p><span class="math display">\[\Delta_{\mathcal{L}}^{(t)} =
-\frac{\mathcal{L}(\boldsymbol{\theta}^{(t+1)}) -
-\mathcal{L}(\boldsymbol{\theta}^{(t)})}{\max(|\mathcal{L}(\boldsymbol{\theta}^{(t)})|,
-1)}\]</span></p>
-</div>
-<div id="practical-considerations" class="section level3">
-<h3>Practical Considerations</h3>
-<ol style="list-style-type: decimal">
-<li><strong>Typical Convergence:</strong> 10-50 iterations for most
-datasets</li>
-<li><strong>Maximum Iterations:</strong> 500 (default), adjustable via
-<code>control$max_iter</code></li>
-<li><strong>Numerical Stability:</strong> Ridge regularization prevents
-divergence from near-singular matrices</li>
-<li><strong>Non-Convergence:</strong> If the algorithm fails to
-converge, check:
-<ul>
-<li>Insufficient overlap between samples (identifiability issue)</li>
-<li>Ill-conditioned input matrices (increase
-<code>control$ridge</code>)</li>
-</ul></li>
-</ol>
-</div>
-<div id="iteration-history" class="section level3">
-<h3>Iteration History</h3>
-<p>The function returns a <code>history</code> data frame
-containing:</p>
-<ul>
-<li><code>iteration</code>: Iteration number</li>
-<li><code>rel_change</code>: <span class="math inline">\(\max(\Delta_{\boldsymbol{\Sigma}},
-\Delta_{\gamma})\)</span></li>
-<li><code>log_likelihood</code>: Observed-data log-likelihood <span class="math inline">\(\mathcal{L}(\boldsymbol{\theta}^{(t)})\)</span>
-<strong>including normalizing constants</strong></li>
-</ul>
-<p><strong>Note:</strong> Version 1.5.0+ includes the full Wishart
-normalizing constants in the log-likelihood. This enables: - Model
-comparison via likelihood ratio tests - Information criteria (AIC, BIC)
-computation - Theoretical validation against known distributions</p>
-<p>The constants do not affect the EM optimization (they’re independent
-of parameters), but they ensure the reported log-likelihood values are
-theoretically correct and comparable across models.</p>
-<p>This allows users to diagnose convergence behavior and detect
-potential issues.</p>
+<p>Both the free and factor models use the same outer convergence
+criterion: the relative Frobenius change in <span class="math inline">\(\boldsymbol{\Sigma}\)</span>,</p>
+<p><span class="math display">\[\frac{\|\boldsymbol{\Sigma}^{(t+1)} -
+\boldsymbol{\Sigma}^{(t)}\|_F}{\|\boldsymbol{\Sigma}^{(t)}\|_F} &lt;
+\epsilon,\]</span></p>
+<p>with default <span class="math inline">\(\epsilon = 10^{-7}\)</span>
+and maximum 500 iterations.</p>
 </div>
 </div>
-</div>
-<div id="parameter-scales-and-output-interpretation" class="section level1">
-<h1>Parameter Scales and Output Interpretation</h1>
-<div id="two-scales-parameter-vs.-data" class="section level2">
-<h2>Two Scales: Parameter vs. Data</h2>
-<p>The CovCombR package distinguishes between two scales for the
-estimated covariance matrix:</p>
-<div id="parameter-scale-hatboldsymbolsigma" class="section level3">
-<h3>Parameter Scale: <span class="math inline">\(\hat{\boldsymbol{\Sigma}}\)</span></h3>
-<p><strong>Obtained via:</strong> <code>coef(fit)</code> or
-<code>fit$Sigma_hat</code></p>
-<p><strong>Definition:</strong> The <strong>per-degree-of-freedom scale
-matrix</strong> estimated directly by the EM algorithm.</p>
-<p><strong>Interpretation:</strong> This is the <span class="math inline">\(\boldsymbol{\Sigma}\)</span> parameter in the
-Wishart model <span class="math inline">\(\mathbf{W}_k \sim
-\text{Wishart}(\nu_k, \alpha_k \gamma \boldsymbol{\Sigma})\)</span>.</p>
-<p><strong>Use Cases:</strong> - Statistical inference about covariance
-parameters - Hypothesis testing (e.g., testing <span class="math inline">\(\boldsymbol{\Sigma}_{ij} = 0\)</span>) - Comparing
-covariance structures across populations - Meta-analysis where per-df
-scale is the natural unit</p>
-<p><strong>Standard Errors:</strong> Available via
-<code>fit$Sigma_se</code> (on the same per-df scale)</p>
-</div>
-<div id="data-scale-hatmathbfs" class="section level3">
-<h3>Data Scale: <span class="math inline">\(\hat{\mathbf{S}}\)</span></h3>
-<p><strong>Obtained via:</strong> <code>fitted(fit)</code> or
-<code>fit$S_hat</code></p>
-<p><strong>Definition:</strong> The <strong>aggregated covariance
-estimate</strong> rescaled to match the data:</p>
-<p><span class="math display">\[\hat{\mathbf{S}} = \hat{\gamma} \cdot
-\hat{\boldsymbol{\Sigma}}\]</span></p>
-<p>where <span class="math inline">\(\hat{\gamma}\)</span> is the global
-scale parameter MLE.</p>
-<p><strong>Interpretation:</strong> This is the “sample covariance”
-estimate that would be obtained if we had a single complete dataset. It
-matches the scale of the input <span class="math inline">\(\{\mathbf{S}_k\}\)</span> matrices.</p>
-<p><strong>Use Cases:</strong> - Genomic prediction (GRM for GBLUP) -
-Downstream statistical modeling (multivariate regression, PCA) -
-Covariance-based machine learning methods - Visualization and
-exploratory analysis</p>
-<p><strong>Standard Errors:</strong> Available via
-<code>fit$S_hat_se</code> (on the data scale)</p>
-</div>
-<div id="relationship-between-scales" class="section level3">
-<h3>Relationship Between Scales</h3>
-<p>The mathematical relationship is:</p>
-<p><span class="math display">\[\hat{\mathbf{S}} = \hat{\gamma} \cdot
-\hat{\boldsymbol{\Sigma}}\]</span></p>
-<p>where <span class="math inline">\(\hat{\gamma}\)</span> is stored in
-<code>fit$S_hat_scale</code>.</p>
-<p><strong>Important Identity:</strong></p>
-<pre class="r"><code>all.equal(fit$S_hat, fit$S_hat_scale * fit$Sigma_hat)  # TRUE</code></pre>
-</div>
-<div id="when-to-use-which-scale" class="section level3">
-<h3>When to Use Which Scale?</h3>
-<table>
-<colgroup>
-<col width="27%" />
-<col width="22%" />
-<col width="50%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th>Task</th>
-<th>Use</th>
-<th>Rationale</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>Genomic prediction (GBLUP)</td>
-<td><code>fit$S_hat</code></td>
-<td>Prediction requires data-scale GRM</td>
-</tr>
-<tr class="even">
-<td>Hypothesis testing (<span class="math inline">\(\rho =
-0\)</span>?)</td>
-<td><code>fit$Sigma_hat</code> + <code>fit$Sigma_se</code></td>
-<td>Statistical inference uses per-df scale</td>
-</tr>
-<tr class="odd">
-<td>Combining with other studies</td>
-<td><code>fit$Sigma_hat</code></td>
-<td>Meta-analysis on parameter scale</td>
-</tr>
-<tr class="even">
-<td>Multivariate regression</td>
-<td><code>fit$S_hat</code></td>
-<td>Input covariance on data scale</td>
-</tr>
-<tr class="odd">
-<td>Visualization (heatmap)</td>
-<td><code>fit$S_hat</code> or <code>cov2cor(fit$S_hat)</code></td>
-<td>Data scale matches intuition</td>
-</tr>
-</tbody>
-</table>
-</div>
-<div id="example-interpretation" class="section level3">
-<h3>Example: Interpretation</h3>
-<p>Suppose we fit a model with 3 studies:</p>
-<pre class="r"><code>fit &lt;- fit_covcomb(S_list, nu = c(100, 150, 200))</code></pre>
-<p>Then:</p>
-<ul>
-<li><code>fit$Sigma_hat[i,j]</code> estimates the per-degree-of-freedom
-covariance between variables <span class="math inline">\(i\)</span> and
-<span class="math inline">\(j\)</span></li>
-<li><code>fit$S_hat[i,j]</code> estimates the covariance on the pooled
-data scale (as if we combined all 450 observations)</li>
-<li><code>fit$S_hat_scale</code> is the global scale factor <span class="math inline">\(\hat{\gamma}\)</span> relating the two scales</li>
-</ul>
-</div>
-</div>
-</div>
-<div id="standard-errors-and-uncertainty-quantification" class="section level1">
-<h1>Standard Errors and Uncertainty Quantification</h1>
-<p>Estimating uncertainty in the combined covariance matrix is crucial
-for downstream inference. CovCombR offers two methods for computing
-standard errors.</p>
-<div id="plugin-standard-errors-se_method-plugin" class="section level2">
-<h2>Plugin Standard Errors (<code>se_method = &quot;plugin&quot;</code>)</h2>
-<div id="method-overview" class="section level3">
-<h3>Method Overview</h3>
-<p>The <strong>plugin method</strong> uses the asymptotic variance of
-the Wishart MLE based on the <strong>observed Fisher
-information</strong>. This is fast and provides reasonable
-approximations for large samples.</p>
-</div>
-<div id="theoretical-basis" class="section level3">
-<h3>Theoretical Basis</h3>
-<p>For a single complete Wishart sample <span class="math inline">\(\mathbf{W} \sim \text{Wishart}(\nu,
-\boldsymbol{\Sigma})\)</span>, the asymptotic variance of the sample
-covariance <span class="math inline">\(\mathbf{S} =
-\mathbf{W}/\nu\)</span> is:</p>
-<p><span class="math display">\[\text{Var}(S_{ij}) =
-\frac{1}{\nu}(\Sigma_{ii}\Sigma_{jj} + \Sigma_{ij}^2)\]</span></p>
-</div>
-<div id="implementation-for-incomplete-data" class="section level3">
-<h3>Implementation for Incomplete Data</h3>
-<p>For our multi-sample incomplete data setting, the plugin SE for each
-entry is:</p>
-<p><span class="math display">\[\text{SE}(\hat{\Sigma}_{ij}) =
-\sqrt{\frac{\hat{\Sigma}_{ii} \hat{\Sigma}_{jj} +
-\hat{\Sigma}_{ij}^2}{\text{coverage}_{ij}}}\]</span></p>
-<p>where <span class="math inline">\(\text{coverage}_{ij}\)</span> is
-the <strong>total effective degrees of freedom</strong> for the <span class="math inline">\((i,j)\)</span> entry:</p>
-<p><span class="math display">\[\text{coverage}_{ij} = \sum_{k: i,j \in
-\mathcal{O}_k} \nu_k\]</span></p>
-<p>This sums degrees of freedom across all studies where variables <span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span> are jointly observed.</p>
-</div>
-<div id="special-cases" class="section level3">
-<h3>Special Cases</h3>
-<ul>
-<li><strong>Never jointly observed:</strong> If no study observes both
-<span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span>, then <span class="math inline">\(\text{coverage}_{ij} = 0\)</span> and <span class="math inline">\(\text{SE}(\hat{\Sigma}_{ij}) = \text{NA}\)</span>.
-This correctly reflects that the covariance is <strong>not
-identifiable</strong> from the data.</li>
-<li><strong>Partially observed:</strong> Lower coverage <span class="math inline">\(\Rightarrow\)</span> higher uncertainty</li>
-<li><strong>Fully observed:</strong> If all studies observe <span class="math inline">\((i,j)\)</span>, coverage is maximal</li>
-</ul>
-</div>
-<div id="advantages" class="section level3">
-<h3>Advantages</h3>
-<ul>
-<li><strong>Fast:</strong> No additional model fitting required</li>
-<li><strong>Closed-form:</strong> Direct computation from <span class="math inline">\(\hat{\boldsymbol{\Sigma}}\)</span> and coverage
-matrix</li>
-<li><strong>Identifiability check:</strong> Returns <code>NA</code> for
-unidentifiable entries</li>
-</ul>
-</div>
-<div id="limitations" class="section level3">
-<h3>Limitations</h3>
-<ul>
-<li><strong>Asymptotic:</strong> Only accurate for large <span class="math inline">\(\nu_k\)</span></li>
-<li><strong>Ignores EM uncertainty:</strong> Treats pseudo-complete data
-as if it were observed</li>
-<li><strong>May underestimate:</strong> Especially when missingness is
-severe or <span class="math inline">\(\nu_k\)</span> is small</li>
-</ul>
-</div>
-<div id="output" class="section level3">
-<h3>Output</h3>
-<ul>
-<li><code>fit$Sigma_se</code>: Standard errors on parameter scale</li>
-<li><code>fit$S_hat_se</code>: Standard errors on data scale (scaled by
-<span class="math inline">\(\hat{\gamma}\)</span>)</li>
-</ul>
-</div>
-</div>
-<div id="bootstrap-standard-errors-se_method-bootstrap" class="section level2">
-<h2>Bootstrap Standard Errors
-(<code>se_method = &quot;bootstrap&quot;</code>)</h2>
-<div id="method-overview-1" class="section level3">
-<h3>Method Overview</h3>
-<p>The <strong>parametric bootstrap</strong> simulates new incomplete
-datasets from the fitted model and refits the EM algorithm <span class="math inline">\(B\)</span> times. Standard errors are the
-empirical standard deviations across bootstrap replicates.</p>
-</div>
-<div id="algorithm" class="section level3">
-<h3>Algorithm</h3>
-<p>For <span class="math inline">\(b = 1, \ldots, B\)</span>:</p>
-<ol style="list-style-type: decimal">
-<li><p><strong>Simulate:</strong> Generate synthetic data from the
-fitted model: <span class="math display">\[\mathbf{W}_k^{(b)} \sim
-\text{Wishart}(\nu_k, \hat{\alpha}_k \hat{\gamma}
-\hat{\boldsymbol{\Sigma}})\]</span> Extract observed blocks: <span class="math inline">\(\mathbf{S}_k^{(b)} =
-\mathbf{W}_k^{(b)}[\mathcal{O}_k, \mathcal{O}_k]\)</span></p></li>
-<li><p><strong>Refit:</strong> Run <code>fit_covcomb()</code> on <span class="math inline">\(\{\mathbf{S}_k^{(b)}\}\)</span> with
-<code>se_method = &quot;none&quot;</code></p></li>
-<li><p><strong>Store:</strong> Save <span class="math inline">\(\hat{\boldsymbol{\Sigma}}^{(b)}\)</span> from the
-bootstrap fit</p></li>
-</ol>
-<p>After <span class="math inline">\(B\)</span> successful replicates,
-compute:</p>
-<p><span class="math display">\[\text{SE}(\hat{\Sigma}_{ij}) =
-\text{sd}\{\hat{\Sigma}_{ij}^{(1)}, \ldots,
-\hat{\Sigma}_{ij}^{(B)}\}\]</span></p>
-</div>
-<div id="configuration" class="section level3">
-<h3>Configuration</h3>
-<p>Bootstrap behavior is controlled via
-<code>control$bootstrap</code>:</p>
-<ul>
-<li><code>B</code>: Number of replicates (default: 200)</li>
-<li><code>seed</code>: RNG seed for reproducibility</li>
-<li><code>progress</code>: Show progress bar if <code>TRUE</code></li>
-<li><code>verbose</code>: Print warnings for failed replicates</li>
-<li><code>retain_samples</code>: Save bootstrap sample array if
-<code>TRUE</code></li>
-<li><code>init_sigma</code>: Initialization for bootstrap fits (default:
-use converged <span class="math inline">\(\hat{\boldsymbol{\Sigma}}\)</span>)</li>
-</ul>
-</div>
-<div id="convergence-handling" class="section level3">
-<h3>Convergence Handling</h3>
-<p>Not all bootstrap replicates may converge (especially with severe
-missingness or small <span class="math inline">\(\nu_k\)</span>). The
-algorithm:</p>
-<ol style="list-style-type: decimal">
-<li>Attempts <span class="math inline">\(B\)</span> bootstrap fits</li>
-<li>Discards non-converged replicates</li>
-<li>Computes SEs using only converged replicates</li>
-<li>Reports success rate in <code>fit$bootstrap$successes</code></li>
-</ol>
-<p><strong>Recommendation:</strong> Ensure at least 80% success rate
-(i.e., <span class="math inline">\(\geq 160\)</span> successes for <span class="math inline">\(B=200\)</span>). If success rate is low, consider:
-- Increasing convergence tolerance - Using
-<code>init_sigma = fit$Sigma_hat</code> to start near the MLE -
-Increasing <code>control$max_iter</code></p>
-</div>
-<div id="advantages-1" class="section level3">
-<h3>Advantages</h3>
-<ul>
-<li><strong>Accurate:</strong> Accounts for EM uncertainty and missing
-data patterns</li>
-<li><strong>Finite-sample:</strong> Valid for small <span class="math inline">\(\nu_k\)</span></li>
-<li><strong>Distribution:</strong> Can examine bootstrap distribution
-(if <code>retain_samples = TRUE</code>)</li>
-</ul>
-</div>
-<div id="limitations-1" class="section level3">
-<h3>Limitations</h3>
-<ul>
-<li><strong>Slow:</strong> ~100× slower than plugin (requires <span class="math inline">\(B\)</span> full EM fits)</li>
-<li><strong>Stochastic:</strong> Results vary slightly across runs (use
-<code>seed</code> for reproducibility)</li>
-<li><strong>Convergence:</strong> May have failures if model is poorly
-identified</li>
-</ul>
-</div>
-<div id="output-1" class="section level3">
-<h3>Output</h3>
-<ul>
-<li><code>fit$Sigma_se</code>: Bootstrap standard errors on parameter
-scale</li>
-<li><code>fit$S_hat_se</code>: Bootstrap standard errors on data
-scale</li>
-<li><code>fit$bootstrap</code>: Metadata (B, successes, failures,
-seed)</li>
-<li><code>fit$bootstrap_samples</code>: Array of bootstrap estimates (if
-<code>retain_samples = TRUE</code>)</li>
-</ul>
-</div>
-<div id="example-usage" class="section level3">
-<h3>Example Usage</h3>
-<pre class="r"><code>fit_boot &lt;- fit_covcomb(
-  S_list, nu,
-  se_method = &quot;bootstrap&quot;,
-  control = list(
-    bootstrap = list(
-      B = 500,
-      seed = 2025,
-      progress = TRUE,
-      retain_samples = FALSE
-    )
-  )
-)
-
-# Check success rate
-fit_boot$bootstrap$successes / fit_boot$bootstrap$B  # Should be &gt; 0.8
-
-# Extract SEs
-se_param &lt;- fit_boot$Sigma_se  # Parameter scale
-se_data &lt;- fit_boot$S_hat_se   # Data scale</code></pre>
-</div>
-</div>
-<div id="supplemented-em-sem-standard-errors-se_method-sem" class="section level2">
-<h2>Supplemented EM (SEM) Standard Errors
-(<code>se_method = &quot;sem&quot;</code>)</h2>
-<div id="method-overview-2" class="section level3">
-<h3>Method Overview</h3>
-<p>The <strong>Supplemented EM (SEM)</strong> method (Meng &amp; Rubin,
-1991) computes asymptotic standard errors using the observed information
-matrix derived from the EM algorithm itself. This provides a fast
-alternative to bootstrap that accounts for missing data uncertainty.</p>
-</div>
-<div id="theoretical-basis-1" class="section level3">
-<h3>Theoretical Basis</h3>
-<p>The SEM method exploits the relationship between the complete-data
-information and the observed-data information:</p>
-<p><span class="math display">\[I_{\text{obs}}(\boldsymbol{\theta}) =
-I_{\text{com}}(\boldsymbol{\theta}) -
-I_{\text{mis}}(\boldsymbol{\theta})\]</span></p>
-<p>where:</p>
-<ul>
-<li><span class="math inline">\(I_{\text{com}}\)</span> is the
-<strong>complete-data information matrix</strong> (negative Hessian of
-the Q function)</li>
-<li><span class="math inline">\(I_{\text{mis}}\)</span> is the
-<strong>missing information</strong> due to incomplete data</li>
-<li><span class="math inline">\(I_{\text{obs}}\)</span> is the
-<strong>observed information matrix</strong></li>
-</ul>
-<p>The key insight is that the missing information can be computed from
-the <strong>EM rate matrix</strong> <span class="math inline">\(\mathbf{R}\)</span>:</p>
-<p><span class="math display">\[I_{\text{mis}} = I_{\text{com}}^{1/2}
-\mathbf{R} I_{\text{com}}^{1/2}\]</span></p>
-<p>where <span class="math inline">\(\mathbf{R} = \frac{\partial
-M(\boldsymbol{\theta})}{\partial
-\boldsymbol{\theta}^\top}\bigg|_{\hat{\boldsymbol{\theta}}}\)</span> is
-the Jacobian of the EM mapping <span class="math inline">\(M\)</span> at
-convergence.</p>
-</div>
-<div id="implementation-strategy" class="section level3">
-<h3>Implementation Strategy</h3>
-<p>To avoid numerical issues with direct covariance parameterization,
-CovCombR uses <strong>log-Cholesky parameterization</strong>:</p>
-<ol style="list-style-type: decimal">
-<li><p><strong>Parameterization:</strong> <span class="math inline">\(\boldsymbol{\Sigma} =
-\mathbf{L}\mathbf{L}^\top\)</span> where <span class="math inline">\(\mathbf{L}\)</span> is lower triangular with <span class="math inline">\(L_{ii} = \exp(\eta_i)\)</span></p></li>
-<li><p><strong>Parameter vector:</strong> <span class="math inline">\(\boldsymbol{\theta} = (\eta_1, \ldots, \eta_p,
-L_{21}, L_{31}, L_{32}, \ldots)\)</span> ensures positive
-definiteness</p></li>
-<li><p><strong>Complete-data information:</strong> Compute <span class="math inline">\(I_{\text{com}}(\hat{\boldsymbol{\theta}})\)</span>
-as the negative Hessian of the Q function with respect to <span class="math inline">\(\boldsymbol{\theta}\)</span></p></li>
-<li><p><strong>EM rate matrix:</strong> Estimate <span class="math inline">\(\mathbf{R}\)</span> via finite differences:</p>
-<ul>
-<li>Perturb each parameter <span class="math inline">\(\theta_j \to
-\theta_j + h\)</span></li>
-<li>Run one EM iteration to get <span class="math inline">\(M(\boldsymbol{\theta} +
-h\mathbf{e}_j)\)</span></li>
-<li>Compute <span class="math inline">\(\mathbf{R} \approx
-[\frac{M(\boldsymbol{\theta} + h\mathbf{e}_j) -
-M(\hat{\boldsymbol{\theta}})}{h}]\)</span></li>
-</ul></li>
-<li><p><strong>Observed information:</strong> Form <span class="math inline">\(I_{\text{obs}} = I_{\text{com}} -
-I_{\text{com}}^{1/2} \mathbf{R} I_{\text{com}}^{1/2}\)</span></p></li>
-<li><p><strong>Delta method:</strong> Map SEs from <span class="math inline">\(\boldsymbol{\theta}\)</span> scale back to <span class="math inline">\(\boldsymbol{\Sigma}\)</span> scale using the
-Jacobian</p></li>
-</ol>
-</div>
-<div id="algorithm-steps" class="section level3">
-<h3>Algorithm Steps</h3>
-<p>For the fitted model with <span class="math inline">\(\hat{\boldsymbol{\Sigma}}\)</span> and <span class="math inline">\(\{\hat{\alpha}_k\}\)</span>:</p>
-<ol style="list-style-type: decimal">
-<li><p>Convert <span class="math inline">\(\hat{\boldsymbol{\Sigma}}\)</span> to log-Cholesky
-parameters <span class="math inline">\(\hat{\boldsymbol{\theta}}\)</span></p></li>
-<li><p>Compute complete-data information by numerical differentiation of
-the Q function</p></li>
-<li><p>Estimate EM rate matrix by perturbing <span class="math inline">\(\boldsymbol{\theta}\)</span> and running one EM
-step for each perturbation</p></li>
-<li><p>Form observed information: <span class="math inline">\(I_{\text{obs}} = I_{\text{com}}^{1/2}(\mathbf{I} -
-\mathbf{R})I_{\text{com}}^{1/2}\)</span></p></li>
-<li><p>Invert to get variance: <span class="math inline">\(\text{Var}(\hat{\boldsymbol{\theta}}) =
-I_{\text{obs}}^{-1}\)</span></p></li>
-<li><p>Apply delta method to obtain <span class="math inline">\(\text{Var}(\text{vec}(\hat{\boldsymbol{\Sigma}}))\)</span></p></li>
-<li><p>Extract standard errors: <span class="math inline">\(\text{SE}(\hat{\Sigma}_{ij}) =
-\sqrt{\text{Var}(\hat{\Sigma}_{ij})}\)</span></p></li>
-</ol>
-</div>
-<div id="diagnostic-information" class="section level3">
-<h3>Diagnostic Information</h3>
-<p>The SEM method provides additional diagnostic information in
-<code>fit$sem</code>:</p>
-<ul>
-<li><strong><code>I_obs</code></strong>: Observed information matrix in
-log-Cholesky parameterization</li>
-<li><strong><code>I_com</code></strong>: Complete-data information
-matrix</li>
-<li><strong><code>R</code></strong>: EM rate matrix (spectral radius
-should be &lt; 1 for contraction)</li>
-<li><strong><code>condition_number</code></strong>: Condition number of
-<span class="math inline">\(I_{\text{obs}}\)</span> (should be &lt;
-<span class="math inline">\(10^6\)</span> for reliable inversion)</li>
-<li><strong><code>min_eigenvalue</code></strong>: Smallest eigenvalue of
-<span class="math inline">\(I_{\text{obs}}\)</span> (should be &gt; 0
-for positive definiteness)</li>
-</ul>
-</div>
-<div id="control-parameters" class="section level3">
-<h3>Control Parameters</h3>
-<p>SEM behavior can be controlled via <code>control$sem</code>:</p>
-<ul>
-<li><strong><code>h</code></strong>: Finite difference step size for
-computing <span class="math inline">\(\mathbf{R}\)</span> (default:
-<span class="math inline">\(10^{-6}\)</span>)</li>
-<li><strong><code>ridge</code></strong>: Ridge parameter for numerical
-stability (default: uses <code>control$ridge</code>)</li>
-</ul>
-</div>
-<div id="advantages-2" class="section level3">
-<h3>Advantages</h3>
-<ul>
-<li><strong>Fast:</strong> ~10× faster than bootstrap (single set of
-finite differences vs. B full fits)</li>
-<li><strong>Asymptotically valid:</strong> Correct under regularity
-conditions</li>
-<li><strong>Diagnostic rich:</strong> Provides information about missing
-data fraction via <span class="math inline">\(\mathbf{R}\)</span></li>
-<li><strong>No stochasticity:</strong> Deterministic results (unlike
-bootstrap)</li>
-</ul>
-</div>
-<div id="limitations-2" class="section level3">
-<h3>Limitations</h3>
-<ul>
-<li><strong>Experimental:</strong> Less extensively validated than
-bootstrap for this specific model</li>
-<li><strong>Asymptotic:</strong> Requires large <span class="math inline">\(\sum_k \nu_k\)</span> for accuracy</li>
-<li><strong>Numerical sensitivity:</strong> Depends on quality of finite
-difference approximations</li>
-<li><strong>May be unreliable:</strong> When EM converges slowly
-(spectral radius of <span class="math inline">\(\mathbf{R}\)</span> near
-1)</li>
-</ul>
-</div>
-<div id="when-to-use-sem" class="section level3">
-<h3>When to Use SEM</h3>
-<p><strong>Use SEM when:</strong></p>
-<ul>
-<li>Need faster SEs than bootstrap for routine reporting</li>
-<li>Sample sizes are large (<span class="math inline">\(\sum_k \nu_k
-&gt; 100\)</span>)</li>
-<li>Interested in diagnostic information about missing data impact</li>
-<li>Exploring many model variations</li>
-</ul>
-<p><strong>Use Bootstrap instead when:</strong></p>
-<ul>
-<li>Formal inference for publication</li>
-<li>Small sample sizes</li>
-<li>SEM diagnostics show numerical issues (large condition number,
-negative eigenvalues)</li>
-<li>Weak overlap between samples</li>
-</ul>
-</div>
-<div id="example-usage-1" class="section level3">
-<h3>Example Usage</h3>
-<pre class="r"><code># Fit with SEM standard errors
-fit_sem &lt;- fit_covcomb(
-  S_list, nu,
-  se_method = &quot;sem&quot;,
-  control = list(
-    sem = list(
-      h = 1e-6,      # Finite difference step
-      ridge = 1e-8   # Regularization
-    )
-  )
-)
-
-# Check diagnostics
-fit_sem$sem$condition_number  # Should be &lt; 10^6
-fit_sem$sem$min_eigenvalue    # Should be &gt; 0
-max(Mod(eigen(fit_sem$sem$R)$values))  # Spectral radius &lt; 1
-
-# Extract SEs
-se_param &lt;- fit_sem$Sigma_se  # Parameter scale</code></pre>
-</div>
-<div id="references" class="section level3">
-<h3>References</h3>
-<p>Meng, X. L., &amp; Rubin, D. B. (1991). Using EM to obtain asymptotic
-variance-covariance matrices: The SEM algorithm. <em>Journal of the
-American Statistical Association</em>, 86(416), 899-909.</p>
-<p>Oakes, D. (1999). Direct calculation of the information matrix via
-the EM algorithm. <em>Journal of the Royal Statistical Society, Series
-B</em>, 61(2), 479-482.</p>
-</div>
-</div>
-<div id="comparison-plugin-vs.-bootstrap-vs.-sem" class="section level2">
-<h2>Comparison: Plugin vs. Bootstrap vs. SEM</h2>
-<table>
-<colgroup>
-<col width="31%" />
-<col width="22%" />
-<col width="31%" />
-<col width="14%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th>Criterion</th>
-<th>Plugin</th>
-<th>Bootstrap</th>
-<th>SEM</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><strong>Speed</strong></td>
-<td>Fast (~1 sec)</td>
-<td>Slow (~2 min for B=200)</td>
-<td>Moderate (~10 sec)</td>
-</tr>
-<tr class="even">
-<td><strong>Accuracy</strong></td>
-<td>Approximate</td>
-<td>High</td>
-<td>Moderate-High</td>
-</tr>
-<tr class="odd">
-<td><strong>Sample size</strong></td>
-<td>Large <span class="math inline">\(\nu_k\)</span></td>
-<td>Any <span class="math inline">\(\nu_k\)</span></td>
-<td>Large <span class="math inline">\(\sum_k \nu_k\)</span></td>
-</tr>
-<tr class="even">
-<td><strong>Identifiability</strong></td>
-<td>Explicit (returns NA)</td>
-<td>Implicit (high SE)</td>
-<td>Implicit (large SE)</td>
-</tr>
-<tr class="odd">
-<td><strong>Reproducibility</strong></td>
-<td>Deterministic</td>
-<td>Stochastic (use seed)</td>
-<td>Deterministic</td>
-</tr>
-<tr class="even">
-<td><strong>Missing data</strong></td>
-<td>Ignores EM uncertainty</td>
-<td>Full accounting</td>
-<td>Full accounting</td>
-</tr>
-<tr class="odd">
-<td><strong>Diagnostics</strong></td>
-<td>Coverage matrix</td>
-<td>Success rate</td>
-<td>Info matrices, <span class="math inline">\(\mathbf{R}\)</span></td>
-</tr>
-<tr class="even">
-<td><strong>Recommendation</strong></td>
-<td>Exploration only</td>
-<td>Gold standard</td>
-<td>Fast alternative</td>
-</tr>
-</tbody>
-</table>
-</div>
-</div>
-<div id="implementation-details-and-numerical-methods" class="section level1">
-<h1>Implementation Details and Numerical Methods</h1>
-<div id="numerical-stability" class="section level2">
-<h2>Numerical Stability</h2>
-<div id="cholesky-decomposition-for-matrix-inversion" class="section level3">
-<h3>Cholesky Decomposition for Matrix Inversion</h3>
-<p>Matrix inversion is the most numerically sensitive operation in the
-EM algorithm. Rather than computing <span class="math inline">\(\boldsymbol{\Sigma}_{OO}^{-1}\)</span> via direct
-inversion (using <code>solve()</code>), the implementation uses
-<strong>Cholesky decomposition</strong>:</p>
-<ol style="list-style-type: decimal">
-<li>Compute <span class="math inline">\(\mathbf{L} =
-\text{chol}(\boldsymbol{\Sigma}_{OO})\)</span> where <span class="math inline">\(\mathbf{L}^T \mathbf{L} =
-\boldsymbol{\Sigma}_{OO}\)</span></li>
-<li>Compute inverse as <span class="math inline">\(\boldsymbol{\Sigma}_{OO}^{-1} = (\mathbf{L}^T
-\mathbf{L})^{-1} = \mathbf{L}^{-1} (\mathbf{L}^T)^{-1}\)</span></li>
-</ol>
-<p>This is implemented via R’s <code>chol2inv(chol(A))</code>
-function.</p>
-<p><strong>Advantages:</strong> - <strong>Numerically stable:</strong>
-Cholesky is more stable than direct inversion - <strong>Positive
-definiteness check:</strong> Cholesky fails if matrix is not PD,
-providing early error detection - <strong>Computational
-efficiency:</strong> <span class="math inline">\(O(p^3/3)\)</span> for
-Cholesky vs. <span class="math inline">\(O(p^3)\)</span> for direct
-inversion</p>
-</div>
-<div id="ridge-regularization" class="section level3">
-<h3>Ridge Regularization</h3>
-<p>To handle near-singular or ill-conditioned matrices, the
-implementation adds a <strong>ridge penalty</strong>:</p>
-<p><span class="math display">\[\boldsymbol{\Sigma}_{OO, \text{ridge}} =
-\boldsymbol{\Sigma}_{OO} + \lambda \mathbf{I}\]</span></p>
-<p>where <span class="math inline">\(\lambda\)</span> is the ridge
-parameter (default: <span class="math inline">\(10^{-8}\)</span>).</p>
-<p><strong>Adaptive Ridge Strategy:</strong></p>
-<p>If Cholesky decomposition fails (matrix not PD), the algorithm:</p>
-<ol style="list-style-type: decimal">
-<li>Increases ridge: <span class="math inline">\(\lambda \leftarrow
-10\lambda\)</span></li>
-<li>Retries Cholesky decomposition</li>
-<li>Repeats up to 10 attempts (ridge up to <span class="math inline">\(10^{-7}\)</span>)</li>
-<li>Throws error if all attempts fail</li>
-</ol>
-<p>This is implemented in the <code>.safe_chol_inverse()</code> internal
-function.</p>
-<p><strong>When to Adjust Ridge:</strong></p>
-<ul>
-<li><strong>Increase ridge</strong> if you see warnings about Cholesky
-failures</li>
-<li><strong>Decrease ridge</strong> if concerned about bias in
-small-sample settings</li>
-<li>Monitor condition number via <code>summary(fit)</code> eigenvalue
-spectrum</li>
-</ul>
-</div>
-<div id="symmetry-enforcement" class="section level3">
-<h3>Symmetry Enforcement</h3>
-<p>Due to floating-point arithmetic, matrices can accumulate small
-asymmetries. After each E-step and M-step, matrices are
-<strong>symmetrized</strong>:</p>
-<p><span class="math display">\[\mathbf{A}_{\text{sym}} =
-\frac{1}{2}(\mathbf{A} + \mathbf{A}^T)\]</span></p>
-<p>This ensures: - Eigendecomposition remains numerically stable -
-Positive definiteness projection works correctly - Output matrices are
-exactly symmetric</p>
-</div>
-<div id="positive-definiteness-projection-1" class="section level3">
-<h3>Positive Definiteness Projection</h3>
-<p>After the M-step, <span class="math inline">\(\boldsymbol{\Sigma}^{(t+1)}\)</span> may have
-small negative eigenvalues due to numerical errors. The algorithm
-projects to the PD cone:</p>
-<ol style="list-style-type: decimal">
-<li>Compute eigendecomposition: <span class="math inline">\(\boldsymbol{\Sigma} = \mathbf{V}
-\boldsymbol{\Lambda} \mathbf{V}^T\)</span></li>
-<li>Floor eigenvalues: <span class="math inline">\(\tilde{\lambda}_i =
-\max(\lambda_i, \lambda_{\min})\)</span></li>
-<li>Reconstruct: <span class="math inline">\(\tilde{\boldsymbol{\Sigma}}
-= \mathbf{V} \tilde{\boldsymbol{\Lambda}} \mathbf{V}^T\)</span></li>
-</ol>
-<p>where <span class="math inline">\(\lambda_{\min} = 10^{-10}\)</span>
-(default).</p>
-<p><strong>Special Case Handling:</strong></p>
-<p>For 1×1 matrices (single variable), R’s <code>diag()</code> function
-has ambiguous behavior. The implementation uses:</p>
-<pre class="r"><code>diag(eigenvalues, nrow = length(eigenvalues))</code></pre>
-<p>to ensure correct reconstruction.</p>
-</div>
-</div>
-<div id="initialization-strategies" class="section level2">
-<h2>Initialization Strategies</h2>
-<div id="avg_padded-default" class="section level3">
-<h3>“avg_padded” (Default)</h3>
-<ol style="list-style-type: decimal">
-<li>For each entry <span class="math inline">\((i,j)\)</span>, average
-<span class="math inline">\(\mathbf{S}_k[i,j]\)</span> across studies
-where both <span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span> are observed</li>
-<li>For unobserved entries, use 0 for off-diagonal, 1 for diagonal</li>
-<li>Ensure positive definiteness via eigenvalue projection</li>
-</ol>
-<p><strong>Advantage:</strong> Uses all available information from
-observed data</p>
-<p><strong>Limitation:</strong> May produce ill-conditioned initial
-matrix if overlap is sparse</p>
-</div>
-<div id="identity" class="section level3">
-<h3>“identity”</h3>
-<p>Initialize <span class="math inline">\(\boldsymbol{\Sigma}^{(0)} =
-\mathbf{I}\)</span> (identity matrix).</p>
-<p><strong>Advantage:</strong> Always well-conditioned</p>
-<p><strong>Limitation:</strong> May require more EM iterations to
-converge</p>
-</div>
-<div id="custom-matrix" class="section level3">
-<h3>Custom Matrix</h3>
-<p>Users can provide a custom <span class="math inline">\(p \times
-p\)</span> initialization matrix.</p>
-<p><strong>Use case:</strong> Warm-starting from a previous fit or
-domain knowledge</p>
-</div>
-</div>
-<div id="performance-optimizations" class="section level2">
-<h2>Performance Optimizations</h2>
-<div id="memoization-cache-v1.4.0" class="section level3">
-<h3>Memoization Cache (v1.4.0+)</h3>
-<p>The E-step requires computing expectations involving
-<strong>commutation matrices</strong> for vectorized operations. Version
-1.4.0 introduced a <strong>memoization cache</strong> that pre-computes
-and stores these matrices.</p>
-<p><strong>Impact:</strong> 26,000× speedup for repeated operations
-(reported in NEWS.md)</p>
-<p><strong>Details:</strong> Commutation matrices <span class="math inline">\(\mathbf{K}_{p,q}\)</span> satisfy <span class="math inline">\(\text{vec}(\mathbf{A}^T) = \mathbf{K}_{p,q}
-\text{vec}(\mathbf{A})\)</span>. Computing these on-the-fly is
-expensive; caching eliminates redundant computation.</p>
-</div>
-<div id="sparse-missing-patterns" class="section level3">
-<h3>Sparse Missing Patterns</h3>
-<p>When a study <span class="math inline">\(k\)</span> has no missing
-variables (<span class="math inline">\(|\mathcal{M}_k| = 0\)</span>),
-the E-step skips all conditional expectation calculations and simply
-returns <span class="math inline">\(\mathbf{S}_k\)</span>. This special
-case detection avoids unnecessary computation.</p>
-</div>
-<div id="early-termination" class="section level3">
-<h3>Early Termination</h3>
-<p>If relative change falls below tolerance, the algorithm immediately
-terminates without running the full <code>max_iter</code> iterations.
-Typical convergence occurs in 10-50 iterations.</p>
-</div>
-</div>
-<div id="identifiability-and-diagnostics" class="section level2">
-<h2>Identifiability and Diagnostics</h2>
-<div id="coverage-matrix" class="section level3">
-<h3>Coverage Matrix</h3>
-<p>The algorithm computes a <strong>coverage matrix</strong> <span class="math inline">\(\mathbf{C} \in \mathbb{R}^{p \times p}\)</span>
-where:</p>
-<p><span class="math display">\[C_{ij} = \sum_{k: i,j \in \mathcal{O}_k}
-\nu_k\]</span></p>
-<p>This quantifies the total degrees of freedom available for estimating
-each covariance entry.</p>
-<p><strong>Interpretation:</strong> - <span class="math inline">\(C_{ij}
-= 0\)</span>: Variables <span class="math inline">\(i\)</span> and <span class="math inline">\(j\)</span> are <strong>never jointly
-observed</strong> → covariance is <strong>not identifiable</strong> -
-<span class="math inline">\(C_{ij} &lt; \sum_k \nu_k / 2\)</span>:
-Sparse coverage → high uncertainty - <span class="math inline">\(C_{ij}
-= \sum_k \nu_k\)</span>: Full coverage → lowest uncertainty</p>
-</div>
-<div id="condition-number-monitoring" class="section level3">
-<h3>Condition Number Monitoring</h3>
-<p>The implementation computes and reports:</p>
-<p><span class="math display">\[\kappa(\boldsymbol{\Sigma}) =
-\frac{\lambda_{\max}(\boldsymbol{\Sigma})}{\lambda_{\min}(\boldsymbol{\Sigma})}\]</span></p>
-<p><strong>Interpretation:</strong> - <span class="math inline">\(\kappa
-&lt; 10^3\)</span>: Well-conditioned (good) - <span class="math inline">\(10^3 &lt; \kappa &lt; 10^6\)</span>: Moderate
-conditioning (acceptable) - <span class="math inline">\(\kappa &gt;
-10^6\)</span>: Ill-conditioned (warning issued) - <span class="math inline">\(\kappa &gt; 10^{10}\)</span>: Severe
-ill-conditioning (likely identifiability issue)</p>
-</div>
-<div id="warnings-and-messages" class="section level3">
-<h3>Warnings and Messages</h3>
-<p>The implementation provides diagnostic warnings for:</p>
-<ol style="list-style-type: decimal">
-<li><strong>Single sample (<span class="math inline">\(K=1\)</span>):</strong> Model is not identifiable;
-unobserved variables will have arbitrary values</li>
-<li><strong>High condition number (<span class="math inline">\(\kappa
-&gt; 10^4\)</span>):</strong> Suggests insufficient overlap or numerical
-issues</li>
-<li><strong>Very high condition number (<span class="math inline">\(\kappa &gt; 10^6\)</span>):</strong> Strong
-warning about ill-conditioning</li>
-<li><strong>Small minimum eigenvalue:</strong> Eigenvalue near threshold
-suggests rank deficiency</li>
-<li><strong>Unobserved variables:</strong> Warning lists variables never
-observed in any study</li>
-</ol>
-</div>
-</div>
-<div id="algorithmic-complexity" class="section level2">
-<h2>Algorithmic Complexity</h2>
-<div id="time-complexity-per-iteration" class="section level3">
-<h3>Time Complexity per Iteration</h3>
-<table>
-<colgroup>
-<col width="28%" />
-<col width="28%" />
-<col width="42%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th>Operation</th>
-<th>Complexity</th>
-<th>Dominant Terms</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td>E-step (all samples)</td>
-<td><span class="math inline">\(O(K \cdot p^3)\)</span></td>
-<td>Cholesky decomposition <span class="math inline">\(\times
-K\)</span></td>
-</tr>
-<tr class="even">
-<td>M-step</td>
-<td><span class="math inline">\(O(K \cdot p^2)\)</span></td>
-<td>Matrix summation</td>
-</tr>
-<tr class="odd">
-<td>Gamma update</td>
-<td><span class="math inline">\(O(K \cdot p^3)\)</span></td>
-<td>Cholesky <span class="math inline">\(\times K\)</span></td>
-</tr>
-<tr class="even">
-<td>Convergence check</td>
-<td><span class="math inline">\(O(p^2)\)</span></td>
-<td>Frobenius norm</td>
-</tr>
-<tr class="odd">
-<td><strong>Total per iteration</strong></td>
-<td><span class="math inline">\(O(K \cdot p^3)\)</span></td>
-<td>Matrix inversions dominate</td>
-</tr>
-</tbody>
-</table>
-</div>
-<div id="space-complexity" class="section level3">
-<h3>Space Complexity</h3>
+<div id="standard-errors" class="section level1">
+<h1>Standard Errors</h1>
+<p>Three methods are available (see
+<code>vignette(&quot;standard-errors&quot;)</code> for practical guidance):</p>
 <table>
 <thead>
 <tr class="header">
-<th>Storage</th>
-<th>Size</th>
-<th>Description</th>
+<th>Method</th>
+<th>Speed</th>
+<th>Accounts for EM uncertainty?</th>
 </tr>
 </thead>
 <tbody>
 <tr class="odd">
-<td><span class="math inline">\(\boldsymbol{\Sigma}\)</span></td>
-<td><span class="math inline">\(O(p^2)\)</span></td>
-<td>Current covariance estimate</td>
+<td><strong>plugin</strong></td>
+<td>Fast</td>
+<td>No — anti-conservative for imputed entries</td>
 </tr>
 <tr class="even">
-<td><span class="math inline">\(\{\tilde{\mathbf{W}}_k\}\)</span></td>
-<td><span class="math inline">\(O(K \cdot p^2)\)</span></td>
-<td>Pseudo-complete data</td>
+<td><strong>bootstrap</strong></td>
+<td>Slow</td>
+<td>Yes — parametric Wishart resampling</td>
 </tr>
 <tr class="odd">
-<td><span class="math inline">\(\{\mathbf{S}_k\}\)</span></td>
-<td><span class="math inline">\(O(\sum_k p_k^2)\)</span></td>
-<td>Input data (sparse)</td>
-</tr>
-<tr class="even">
-<td>History</td>
-<td><span class="math inline">\(O(T)\)</span></td>
-<td>Iteration history (<span class="math inline">\(T\)</span> =
-iterations)</td>
-</tr>
-<tr class="odd">
-<td><strong>Total</strong></td>
-<td><span class="math inline">\(O(K \cdot p^2)\)</span></td>
-<td>Scales with studies × variables²</td>
+<td><strong>sem</strong></td>
+<td>Medium</td>
+<td>Yes — via Meng–Rubin observed information</td>
 </tr>
 </tbody>
 </table>
+<p>For factor-model fits, plugin SEs use the Wishart variance formula
+with the estimated <span class="math inline">\(\boldsymbol{\Sigma}\)</span> and the per-pair
+coverage counts; they return <code>NA</code> for pairs with zero direct
+coverage. Bootstrap SEs are valid for all pairs when a factor model is
+used, because the bootstrap refits the same (identified) factor model on
+each replicate.</p>
 </div>
-<div id="practical-scalability" class="section level3">
-<h3>Practical Scalability</h3>
-<p><strong>Tested Performance:</strong> - <span class="math inline">\(p
-\leq 100\)</span>: Fast (&lt; 1 second) - <span class="math inline">\(p
-\approx 500\)</span>: Moderate (10-30 seconds) - <span class="math inline">\(p \approx 1000\)</span>: Slow (1-5 minutes) -
-<span class="math inline">\(p &gt; 2000\)</span>: Very slow (consider
-sparsity or dimension reduction)</p>
-<p><strong>Bottleneck:</strong> Matrix inversions scale as <span class="math inline">\(O(p^3)\)</span>, limiting scalability for very
-large <span class="math inline">\(p\)</span>.</p>
+<div id="parameter-counts-and-aicbic" class="section level1">
+<h1>Parameter Counts and AIC/BIC</h1>
+<p>The observed-data log-likelihood is identical across models — it is
+always the Wishart log-likelihood evaluated at the current <span class="math inline">\(\boldsymbol{\Sigma}\)</span> (regardless of how
+<span class="math inline">\(\boldsymbol{\Sigma}\)</span> is
+parameterised). AIC and BIC differ only in the parameter count <span class="math inline">\(d\)</span>:</p>
+<p><span class="math display">\[\text{AIC} = -2\hat\ell + 2d, \qquad
+\text{BIC} = -2\hat\ell + d\log n, \quad n = \sum_k \nu_k\]</span></p>
+<p>The functions <code>compute_aic(fit)</code> and
+<code>compute_bic(fit, nu)</code> automatically detect whether the fit
+used a factor model (<code>fit$model == &quot;factor&quot;</code>) and apply the
+correct count.</p>
 </div>
-</div>
-<div id="error-handling" class="section level2">
-<h2>Error Handling</h2>
-<p>The implementation validates inputs and provides informative error
-messages:</p>
-<ol style="list-style-type: decimal">
-<li><strong>Missing row/column names:</strong> Each <span class="math inline">\(\mathbf{S}_k\)</span> must have matching row and
-column names</li>
-<li><strong>Dimension mismatch:</strong> Names in <span class="math inline">\(\mathbf{S}_k\)</span> must be consistent across
-samples</li>
-<li><strong>Invalid degrees of freedom:</strong> <span class="math inline">\(\nu_k\)</span> must be positive and greater than
-<span class="math inline">\(p_k - 1\)</span></li>
-<li><strong>Non-positive definite input:</strong> Warns if input <span class="math inline">\(\mathbf{S}_k\)</span> is not PD</li>
-<li><strong>Convergence failure:</strong> Reports non-convergence and
-provides diagnostics</li>
-</ol>
-</div>
-<div id="reproducibility" class="section level2">
-<h2>Reproducibility</h2>
-<div id="random-number-generation" class="section level3">
-<h3>Random Number Generation</h3>
+<div id="implementation-notes" class="section level1">
+<h1>Implementation Notes</h1>
 <ul>
-<li>Bootstrap SEs use <code>stats::rWishart()</code> for simulation</li>
-<li>Set <code>control$bootstrap$seed</code> for reproducible
-results</li>
-<li>Algorithm preserves and restores R’s RNG state after bootstrap</li>
+<li><strong>Cholesky inversion:</strong> All matrix inversions use
+<code>chol2inv(chol(A))</code> with adaptive ridge padding (<span class="math inline">\(\lambda = 10^{-8}\)</span> default, escalated on
+failure).</li>
+<li><strong>Positive-definiteness projection:</strong> After each outer
+EM iteration, <span class="math inline">\(\boldsymbol{\Sigma}\)</span>
+is projected to the PD cone by flooring eigenvalues at <span class="math inline">\(10^{-10}\)</span>.</li>
+<li><strong>Symmetry enforcement:</strong> <span class="math inline">\(\tilde{\mathbf{W}}_k\)</span> is symmetrised after
+the E-step; <span class="math inline">\(\boldsymbol{\Sigma}\)</span> is
+symmetrised after each M-step.</li>
+<li><strong>Factor initialisation:</strong> Starting loadings are the
+top-<span class="math inline">\(k\)</span> eigenvectors of the initial
+<span class="math inline">\(\boldsymbol{\Sigma}\)</span> scaled by <span class="math inline">\(\sqrt{\lambda_i}\)</span>; unique variances are
+initialised as <span class="math inline">\(\psi_i = \max(\sigma_{ii} -
+\|\boldsymbol{\Lambda}[i,\cdot]\|^2, 10^{-8})\)</span>.</li>
 </ul>
 </div>
-<div id="floating-point-consistency" class="section level3">
-<h3>Floating-Point Consistency</h3>
-<ul>
-<li>Results are deterministic (except for bootstrap)</li>
-<li>Small variations (&lt;1e-10) may occur across platforms due to
-BLAS/LAPACK differences</li>
-<li>Ridge regularization ensures consistency across runs</li>
-</ul>
-</div>
-</div>
-</div>
-<div id="theoretical-foundations-and-extensions" class="section level1">
-<h1>Theoretical Foundations and Extensions</h1>
-<div id="connection-to-classical-theory" class="section level2">
-<h2>Connection to Classical Theory</h2>
-<div id="wishart-distribution" class="section level3">
-<h3>Wishart Distribution</h3>
-<p>The <strong>Wishart distribution</strong> is a multivariate
-generalization of the chi-squared distribution. If <span class="math inline">\(\mathbf{X}_1, \ldots, \mathbf{X}_n \sim
-\mathcal{N}(\mathbf{0}, \boldsymbol{\Sigma})\)</span> are independent
-<span class="math inline">\(p\)</span>-dimensional Gaussians, then:</p>
-<p><span class="math display">\[\mathbf{W} = \sum_{i=1}^n \mathbf{X}_i
-\mathbf{X}_i^T \sim \text{Wishart}(n, \boldsymbol{\Sigma})\]</span></p>
-<p><strong>Properties:</strong> - <span class="math inline">\(\mathbb{E}[\mathbf{W}] = n
-\boldsymbol{\Sigma}\)</span> - <span class="math inline">\(\text{Var}(W_{ij}) = n(\Sigma_{ii}\Sigma_{jj} +
-\Sigma_{ij}^2)\)</span> - Density: <span class="math inline">\(p(\mathbf{W}) \propto |\mathbf{W}|^{(n-p-1)/2}
-\exp\left(-\frac{1}{2}\text{tr}(\boldsymbol{\Sigma}^{-1}\mathbf{W})\right)\)</span></p>
-<p>For sample covariance matrices, if <span class="math inline">\(n &gt;
-p\)</span> observations are used to compute <span class="math inline">\(\mathbf{S}\)</span>, then <span class="math inline">\((n-1)\mathbf{S} \sim \text{Wishart}(n-1,
-\boldsymbol{\Sigma})\)</span>.</p>
-</div>
-<div id="missing-data-and-em-theory" class="section level3">
-<h3>Missing Data and EM Theory</h3>
-<p>The EM algorithm (Dempster et al., 1977) is a general framework for
-maximum likelihood estimation with incomplete data:</p>
-<ol style="list-style-type: decimal">
-<li><strong>Complete-data likelihood:</strong> Easy to maximize if we
-had complete data</li>
-<li><strong>E-step:</strong> Replace missing data with their conditional
-expectations</li>
-<li><strong>M-step:</strong> Maximize the expected complete-data
-likelihood</li>
-</ol>
-<p><strong>Key Theorem:</strong> Each EM iteration increases the
-observed-data log-likelihood:</p>
-<p><span class="math display">\[\mathcal{L}(\boldsymbol{\theta}^{(t+1)})
-\geq \mathcal{L}(\boldsymbol{\theta}^{(t)})\]</span></p>
-<p>with equality only at stationary points. This guarantees convergence
-to at least a local maximum.</p>
-</div>
-<div id="partitioned-wishart-theory" class="section level3">
-<h3>Partitioned Wishart Theory</h3>
-<p>When <span class="math inline">\(\mathbf{W} \sim \text{Wishart}(\nu,
-\boldsymbol{\Sigma})\)</span> and we partition <span class="math inline">\(\mathbf{W}\)</span> into observed (<span class="math inline">\(O\)</span>) and missing (<span class="math inline">\(M\)</span>) blocks, the conditional distribution
-is (Anderson, 2003):</p>
-<p><span class="math display">\[\mathbf{W}_{MM} \mid \mathbf{W}_{OO}
-\sim \text{Wishart}(\nu - |O|, \boldsymbol{\Delta}) + \mathbf{B}
-\mathbf{W}_{OO} \mathbf{B}^T\]</span></p>
-<p>where <span class="math inline">\(\boldsymbol{\Delta} =
-\boldsymbol{\Sigma}_{MM} -
-\boldsymbol{\Sigma}_{MO}\boldsymbol{\Sigma}_{OO}^{-1}\boldsymbol{\Sigma}_{OM}\)</span>
-is the Schur complement.</p>
-<p>This is the <strong>theoretical foundation</strong> for the E-step in
-CovCombR.</p>
-</div>
-</div>
-<div id="identifiability-conditions" class="section level2">
-<h2>Identifiability Conditions</h2>
-<div id="when-is-boldsymbolsigma-identifiable" class="section level3">
-<h3>When is <span class="math inline">\(\boldsymbol{\Sigma}\)</span>
-Identifiable?</h3>
-<p>For the covariance <span class="math inline">\(\boldsymbol{\Sigma}\)</span> to be uniquely
-determined from incomplete data, we need:</p>
-<ol style="list-style-type: decimal">
-<li><p><strong>Connectedness:</strong> The <strong>covariance
-graph</strong> must be connected, where:</p>
-<ul>
-<li>Vertices = variables <span class="math inline">\(\{1, \ldots,
-p\}\)</span></li>
-<li>Edges = pairs <span class="math inline">\((i,j)\)</span> jointly
-observed in at least one study</li>
-</ul>
-<p>If the graph is disconnected, covariances between components are
-unidentifiable.</p></li>
-<li><p><strong>Sufficient overlap:</strong> For each variable pair <span class="math inline">\((i,j)\)</span>, at least one study must observe
-both.</p></li>
-<li><p><strong>Multiple samples:</strong> With <span class="math inline">\(K=1\)</span> sample, unobserved variables are
-completely arbitrary (no information).</p></li>
-</ol>
-</div>
-<div id="degrees-of-freedom-requirements" class="section level3">
-<h3>Degrees of Freedom Requirements</h3>
-<p>For asymptotic theory to apply:</p>
-<ul>
-<li>Each <span class="math inline">\(\nu_k &gt; p - 1\)</span> (Wishart
-requires <span class="math inline">\(\nu &gt; p-1\)</span> for
-non-degeneracy)</li>
-<li>Total effective degrees of freedom <span class="math inline">\(\sum_k \nu_k &gt; p(p+1)/2\)</span> (number of
-unique covariance entries)</li>
-</ul>
-<p>In practice, larger <span class="math inline">\(\nu_k\)</span> values
-provide more stable estimates and better SE approximations.</p>
-</div>
-</div>
-<div id="comparison-to-alternative-methods" class="section level2">
-<h2>Comparison to Alternative Methods</h2>
-<div id="naive-stitching" class="section level3">
-<h3>Naive Stitching</h3>
-<p><strong>Method:</strong> Directly combine overlapping entries by
-averaging.</p>
-<p><strong>Issues:</strong> - Not guaranteed positive definite - Ignores
-statistical dependencies - No uncertainty quantification - Biased when
-overlap is sparse</p>
-<p><strong>CovCombR Advantage:</strong> Statistically principled, PD
-guarantee, SE estimates.</p>
-</div>
-<div id="complete-case-analysis" class="section level3">
-<h3>Complete Case Analysis</h3>
-<p><strong>Method:</strong> Use only variables observed in all
-studies.</p>
-<p><strong>Issues:</strong> - Massive information loss - Biased if
-missingness is related to outcomes - Reduces effective sample size</p>
-<p><strong>CovCombR Advantage:</strong> Uses all available data, valid
-under MAR assumption.</p>
-</div>
-<div id="pairwise-maximum-likelihood" class="section level3">
-<h3>Pairwise Maximum Likelihood</h3>
-<p><strong>Method:</strong> Estimate each <span class="math inline">\(\boldsymbol{\Sigma}_{ij}\)</span> independently
-using studies observing both <span class="math inline">\(i\)</span> and
-<span class="math inline">\(j\)</span>.</p>
-<p><strong>Issues:</strong> - Not guaranteed PD - Ignores dependencies
-between entries - Inefficient (doesn’t share information)</p>
-<p><strong>CovCombR Advantage:</strong> Joint estimation, PD guarantee,
-borrows strength across entries.</p>
-</div>
-<div id="multiple-imputation-mi" class="section level3">
-<h3>Multiple Imputation (MI)</h3>
-<p><strong>Method:</strong> Impute missing Wishart blocks multiple
-times, fit to each imputed dataset, pool results.</p>
-<p><strong>Comparison:</strong> - <strong>MI:</strong> More flexible
-(can incorporate auxiliary variables), but computationally expensive -
-<strong>CovCombR:</strong> Direct likelihood-based inference, more
-efficient for Wishart model</p>
-<p>Both are valid under MAR; CovCombR is preferable when the Wishart
-model is appropriate.</p>
-</div>
-</div>
-<div id="extensions-and-future-directions" class="section level2">
-<h2>Extensions and Future Directions</h2>
-<div id="structured-covariance" class="section level3">
-<h3>Structured Covariance</h3>
-<p>The current implementation assumes unstructured <span class="math inline">\(\boldsymbol{\Sigma}\)</span>. Potential
-extensions:</p>
-<ul>
-<li><strong>Factor models:</strong> <span class="math inline">\(\boldsymbol{\Sigma} = \mathbf{L}\mathbf{L}^T +
-\boldsymbol{\Psi}\)</span> (low-rank + diagonal)</li>
-<li><strong>Sparse estimation:</strong> Penalized EM with <span class="math inline">\(\ell_1\)</span> penalty for sparsity</li>
-<li><strong>Banded structure:</strong> <span class="math inline">\(\boldsymbol{\Sigma}_{ij} = 0\)</span> for <span class="math inline">\(|i-j| &gt; k\)</span></li>
-</ul>
-</div>
-<div id="robust-estimation" class="section level3">
-<h3>Robust Estimation</h3>
-<p>Current implementation assumes Wishart (Gaussian) data. For
-heavy-tailed or contaminated data:</p>
-<ul>
-<li><strong>t-Wishart:</strong> Replace Wishart with generalized Wishart
-based on multivariate t</li>
-<li><strong>M-estimation:</strong> Use robust loss functions in
-M-step</li>
-<li><strong>Outlier detection:</strong> Flag samples with extreme
-likelihood contributions</li>
-</ul>
-</div>
-<div id="bayesian-variant" class="section level3">
-<h3>Bayesian Variant</h3>
-<p>A Bayesian extension could:</p>
-<ul>
-<li>Place prior on <span class="math inline">\(\boldsymbol{\Sigma}\)</span> (e.g.,
-Inverse-Wishart)</li>
-<li>Use MCMC or variational inference instead of EM</li>
-<li>Provide full posterior uncertainty (not just SEs)</li>
-<li>Naturally incorporate prior knowledge</li>
-</ul>
-</div>
-<div id="high-dimensional-extensions" class="section level3">
-<h3>High-Dimensional Extensions</h3>
-<p>For <span class="math inline">\(p \gg K\)</span> or very large <span class="math inline">\(p\)</span>:</p>
-<ul>
-<li><strong>Regularized EM:</strong> Add ridge or LASSO penalties</li>
-<li><strong>Sparse factor models:</strong> Reduce effective
-dimension</li>
-<li><strong>Distributed computation:</strong> Parallelize E-step across
-samples</li>
-</ul>
-</div>
-</div>
-<div id="software-implementation-notes" class="section level2">
-<h2>Software Implementation Notes</h2>
-<div id="key-design-choices" class="section level3">
-<h3>Key Design Choices</h3>
-<ol style="list-style-type: decimal">
-<li><p><strong>Pure R Implementation:</strong> No compiled code
-(C/C++/Fortran), ensuring:</p>
-<ul>
-<li>Portability across platforms</li>
-<li>Easy installation (no compiler required)</li>
-<li>Maintainability</li>
-</ul>
-<p><strong>Trade-off:</strong> Slower than optimized compiled code, but
-acceptable for <span class="math inline">\(p \leq
-1000\)</span>.</p></li>
-<li><p><strong>Minimal Dependencies:</strong> Only base R
-<code>stats</code> package required.</p>
-<ul>
-<li>Reduces risk of breaking changes</li>
-<li>Simplifies installation</li>
-<li>Ensures long-term stability</li>
-</ul></li>
-<li><p><strong>S3 Object System:</strong> Uses standard R generic
-methods (<code>print</code>, <code>summary</code>, <code>coef</code>,
-<code>fitted</code>).</p>
-<ul>
-<li>Familiar interface for R users</li>
-<li>Integrates with existing workflows</li>
-<li>Extensible via new methods</li>
-</ul></li>
-</ol>
-</div>
-<div id="comparison-to-other-packages" class="section level3">
-<h3>Comparison to Other Packages</h3>
-<table style="width:100%;">
-<colgroup>
-<col width="15%" />
-<col width="25%" />
-<col width="23%" />
-<col width="20%" />
-<col width="16%" />
-</colgroup>
-<thead>
-<tr class="header">
-<th>Package</th>
-<th>Functionality</th>
-<th>Missing Data</th>
-<th>SE Methods</th>
-<th>Language</th>
-</tr>
-</thead>
-<tbody>
-<tr class="odd">
-<td><strong>CovCombR</strong></td>
-<td>Multi-sample covariance combination</td>
-<td>Arbitrary patterns</td>
-<td>Plugin, Bootstrap</td>
-<td>R</td>
-</tr>
-<tr class="even">
-<td><strong>lavaan</strong></td>
-<td>SEM, covariance structure</td>
-<td>Complete data</td>
-<td>Asymptotic</td>
-<td>R</td>
-</tr>
-<tr class="odd">
-<td><strong>corpcor</strong></td>
-<td>Shrinkage estimation</td>
-<td>Complete data</td>
-<td>None</td>
-<td>R</td>
-</tr>
-<tr class="even">
-<td><strong>glasso</strong></td>
-<td>Sparse inverse covariance</td>
-<td>Complete data</td>
-<td>Bootstrap</td>
-<td>R</td>
-</tr>
-</tbody>
-</table>
-<p><strong>Unique Features of CovCombR:</strong> - Handles arbitrary
-incomplete data patterns - Multi-sample EM algorithm - Explicit
-identifiability checks - Bootstrap SE for finite samples</p>
-</div>
-</div>
-</div>
-<div id="references-1" class="section level1">
+<div id="references" class="section level1">
 <h1>References</h1>
-<div id="core-em-and-missing-data-theory" class="section level2">
-<h2>Core EM and Missing Data Theory</h2>
+<div id="em-and-missing-data" class="section level2">
+<h2>EM and Missing Data</h2>
 <p>Dempster, A. P., Laird, N. M., &amp; Rubin, D. B. (1977). Maximum
 likelihood from incomplete data via the EM algorithm. <em>Journal of the
-Royal Statistical Society, Series B</em>, 39(1), 1-38.</p>
+Royal Statistical Society, Series B</em>, 39(1), 1–38.</p>
 <p>McLachlan, G. J., &amp; Krishnan, T. (2008). <em>The EM Algorithm and
-Extensions</em> (2nd ed.). Wiley Series in Probability and
-Statistics.</p>
-<p>Little, R. J., &amp; Rubin, D. B. (2019). <em>Statistical Analysis
-with Missing Data</em> (3rd ed.). Wiley.</p>
+Extensions</em> (2nd ed.). Wiley.</p>
 </div>
-<div id="wishart-distribution-theory" class="section level2">
-<h2>Wishart Distribution Theory</h2>
+<div id="factor-analysis" class="section level2">
+<h2>Factor Analysis</h2>
+<p>Rubin, D. B., &amp; Thayer, D. T. (1982). EM algorithms for ML factor
+analysis. <em>Psychometrika</em>, 47(1), 69–76.</p>
+<p>Anderson, T. W., &amp; Rubin, H. (1956). Statistical inference in
+factor analysis. <em>Proceedings of the Third Berkeley Symposium on
+Mathematical Statistics and Probability</em>, 5, 111–150.</p>
+</div>
+<div id="wishart-distribution" class="section level2">
+<h2>Wishart Distribution</h2>
 <p>Anderson, T. W. (2003). <em>An Introduction to Multivariate
 Statistical Analysis</em> (3rd ed.). Wiley.</p>
-<p>Muirhead, R. J. (1982). <em>Aspects of Multivariate Statistical
-Theory</em>. Wiley.</p>
-<p>Gupta, A. K., &amp; Nagar, D. K. (1999). <em>Matrix Variate
-Distributions</em>. Chapman &amp; Hall/CRC.</p>
 </div>
-<div id="genomic-applications" class="section level2">
-<h2>Genomic Applications</h2>
-<p>VanRaden, P. M. (2008). Efficient methods to compute genomic
-predictions. <em>Journal of Dairy Science</em>, 91(11), 4414-4423.</p>
-<p>Legarra, A., Aguilar, I., &amp; Misztal, I. (2009). A relationship
-matrix including full pedigree and genomic information. <em>Journal of
-Dairy Science</em>, 92(9), 4656-4663.</p>
-</div>
-<div id="numerical-methods" class="section level2">
-<h2>Numerical Methods</h2>
-<p>Golub, G. H., &amp; Van Loan, C. F. (2013). <em>Matrix
-Computations</em> (4th ed.). Johns Hopkins University Press.</p>
-<p>Higham, N. J. (2002). <em>Accuracy and Stability of Numerical
-Algorithms</em> (2nd ed.). SIAM.</p>
-</div>
-<div id="bootstrap-and-standard-errors" class="section level2">
-<h2>Bootstrap and Standard Errors</h2>
-<p>Efron, B., &amp; Tibshirani, R. J. (1994). <em>An Introduction to the
-Bootstrap</em>. Chapman &amp; Hall/CRC.</p>
+<div id="standard-errors-1" class="section level2">
+<h2>Standard Errors</h2>
+<p>Meng, X. L., &amp; Rubin, D. B. (1991). Using EM to obtain asymptotic
+variance-covariance matrices: The SEM algorithm. <em>Journal of the
+American Statistical Association</em>, 86(416), 899–909.</p>
 <p>Louis, T. A. (1982). Finding the observed information matrix when
 using the EM algorithm. <em>Journal of the Royal Statistical Society,
-Series B</em>, 44(2), 226-233.</p>
+Series B</em>, 44(2), 226–233.</p>
 </div>
-<div id="software-and-implementation" class="section level2">
-<h2>Software and Implementation</h2>
-<p>R Core Team (2024). <em>R: A Language and Environment for Statistical
-Computing</em>. R Foundation for Statistical Computing, Vienna, Austria.
-<a href="https://www.R-project.org/" class="uri">https://www.R-project.org/</a></p>
-<p>Bates, D., &amp; Maechler, M. (2024). <em>Matrix: Sparse and Dense
-Matrix Classes and Methods</em>. R package. <a href="https://CRAN.R-project.org/package=Matrix" class="uri">https://CRAN.R-project.org/package=Matrix</a></p>
+<div id="model-selection" class="section level2">
+<h2>Model Selection</h2>
+<p>Akaike, H. (1974). A new look at the statistical model
+identification. <em>IEEE Transactions on Automatic Control</em>, 19(6),
+716–723.</p>
+<p>Schwarz, G. (1978). Estimating the dimension of a model. <em>Annals
+of Statistics</em>, 6(2), 461–464.</p>
 </div>
 </div>
 

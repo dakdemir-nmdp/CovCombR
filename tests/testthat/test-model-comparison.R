@@ -107,7 +107,7 @@ test_that("compute_aic works correctly", {
   nu_vec <- c(s1 = nu, s2 = nu)
 
   fit <- suppressWarnings(
-    fit_covcomb(S_list, nu_vec, scale_method = "none", se_method = "none")
+    fit_covcomb(S_list, nu_vec, n_factors = NULL, scale_method = "none", se_method = "none")
   )
 
   aic <- compute_aic(fit)
@@ -143,7 +143,7 @@ test_that("compute_bic works correctly", {
   nu_vec <- c(s1 = nu, s2 = nu)
 
   fit <- suppressWarnings(
-    fit_covcomb(S_list, nu_vec, scale_method = "none", se_method = "none")
+    fit_covcomb(S_list, nu_vec, n_factors = NULL, scale_method = "none", se_method = "none")
   )
 
   bic <- compute_bic(fit, nu_vec)

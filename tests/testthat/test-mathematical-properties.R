@@ -198,7 +198,7 @@ test_that("Handles single sample correctly", {
   S_list <- list(s1 = S)
   nu_vec <- c(s1 = nu)
   
-  fit <- fit_covcomb(S_list, nu_vec, scale_method = "none", se_method = "none")
+  fit <- fit_covcomb(S_list, nu_vec, n_factors = NULL, scale_method = "none", se_method = "none")
 
   # Should return S (the sample covariance) essentially
   expected <- S

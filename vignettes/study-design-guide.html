@@ -9,11 +9,11 @@
 <meta http-equiv="X-UA-Compatible" content="IE=EDGE" />
 
 
-<meta name="author" content="CovCombR Package" />
+<meta name="author" content="Deniz Akdemir" />
 
-<meta name="date" content="2026-06-30" />
+<meta name="date" content="2026-07-01" />
 
-<title>Combining Incomplete Covariance Matrices: Iris Example</title>
+<title>Designing Studies for CovCombR</title>
 
 <script>// Pandoc 2.9 adds attributes on both header and div. We remove the former (to
 // be compatible with the behavior of Pandoc < 2.8).
@@ -350,294 +350,408 @@ display: none;
 
 
 
-<h1 class="title toc-ignore">Combining Incomplete Covariance Matrices:
-Iris Example</h1>
-<h4 class="author">CovCombR Package</h4>
-<h4 class="date">2026-06-30</h4>
+<h1 class="title toc-ignore">Designing Studies for CovCombR</h1>
+<h4 class="author">Deniz Akdemir</h4>
+<h4 class="date">2026-07-01</h4>
 
 </div>
 
-<div id="TOC">
-<ul>
-<li><a href="#introduction" id="toc-introduction">Introduction</a></li>
-<li><a href="#example-with-iris-data" id="toc-example-with-iris-data">Example with Iris Data</a></li>
-<li><a href="#more-realistic-scenario-different-sample-sizes" id="toc-more-realistic-scenario-different-sample-sizes">More Realistic
-Scenario: Different Sample Sizes</a></li>
-<li><a href="#bootstrap-standard-errors" id="toc-bootstrap-standard-errors">Bootstrap Standard Errors</a></li>
-<li><a href="#summary" id="toc-summary">Summary</a></li>
-<li><a href="#references" id="toc-references">References</a></li>
-<li><a href="#session-information" id="toc-session-information">Session
-Information</a></li>
-</ul>
-</div>
 
-<div id="introduction" class="section level2">
-<h2>Introduction</h2>
-<p>This vignette demonstrates how to use the <code>CovCombR</code>
-package to combine incomplete covariance matrices using the classic iris
-dataset. Different studies measure different subsets of variables;
-CovCombR recovers the full covariance structure from these partial
-observations.</p>
-<div id="the-problem" class="section level3">
-<h3>The Problem</h3>
-<p>Suppose three studies each measure a different pair of iris
-variables:</p>
-<ul>
-<li>Study 1: Sepal.Length and Sepal.Width</li>
-<li>Study 2: Sepal.Length and Petal.Length</li>
-<li>Study 3: Sepal.Width and Petal.Width</li>
-</ul>
-<p>The pairs (Sepal.Width, Petal.Length), (Petal.Length, Petal.Width),
-and (Sepal.Length, Petal.Width) are never jointly observed. With the
-<strong>free-Σ model</strong> those covariances would be unidentified.
-With the <strong>factor model</strong> they can be recovered through
-shared relationships across the overlapping variables — which is why
-CovCombR defaults to automatic factor-model selection.</p>
-</div>
-</div>
-<div id="example-with-iris-data" class="section level2">
-<h2>Example with Iris Data</h2>
-<div id="load-and-prepare" class="section level3">
-<h3>Load and Prepare</h3>
-<pre class="r"><code>library(CovCombR)
-data(iris)
-colnames(iris) &lt;- c(&quot;S.L&quot;, &quot;S.W&quot;, &quot;P.L&quot;, &quot;P.W&quot;, &quot;Species&quot;)
-iris_virginica &lt;- iris[iris$Species == &quot;virginica&quot;, ]
-nrow(iris_virginica)</code></pre>
-<pre><code>## [1] 50</code></pre>
-</div>
-<div id="create-incomplete-covariance-matrices" class="section level3">
-<h3>Create Incomplete Covariance Matrices</h3>
-<pre class="r"><code>set.seed(1234)
-
-CovList &lt;- list(
-  Study1 = cov(iris_virginica[sample(1:50, 20), c(1, 2)]),  # Sepal measurements
-  Study2 = cov(iris_virginica[sample(1:50, 25), c(1, 3)]),  # Sepal.L + Petal.L
-  Study3 = cov(iris_virginica[sample(1:50, 30), c(2, 4)])   # Sepal.W + Petal.W
-)
-
-CovList</code></pre>
-<pre><code>## $Study1
-##            S.L        S.W
-## S.L 0.26463158 0.03821053
-## S.W 0.03821053 0.06168421
-## 
-## $Study2
-##           S.L       P.L
-## S.L 0.4572667 0.3614833
-## P.L 0.3614833 0.3531000
-## 
-## $Study3
-##            S.W        P.W
-## S.W 0.14654023 0.06673563
-## P.W 0.06673563 0.07843678</code></pre>
-<p>The missing covariances (Sepal.Width–Petal.Length,
-Petal.Length–Petal.Width, Sepal.Length–Petal.Width) are never jointly
-observed.</p>
-</div>
-<div id="fit-the-model" class="section level3">
-<h3>Fit the Model</h3>
-<p>The default <code>n_factors = &quot;auto&quot;</code> automatically selects an
-appropriate factor model and returns the selected fit alongside a table
-of all candidates.</p>
-<pre class="r"><code>nu &lt;- c(Study1 = 19, Study2 = 24, Study3 = 29)
-
-fit &lt;- fit_covcomb(CovList, nu = nu, se_method = &quot;none&quot;)
-fit</code></pre>
-<pre><code>## Wishart EM Covariance Combination
-## Call: fit_fa_em(S_list = S_list, nu = nu, k = kk, scale_method = scale_method, 
-##     alpha_normalization = alpha_normalization, init_sigma = init_sigma, 
-##     control = control)
-## 
-## Status: converged in 189 iterations
-## Final relative change: 9.89e-08
-## 
-## Combined covariance matrix (Sigma_hat): 4 x 4
-##   Mean diagonal: 0.2255
-##   Condition number: 4.45e+06</code></pre>
-<pre class="r"><code>fit$ic_table</code></pre>
-<pre><code>##   n_factors    loglik n_params      AIC      BIC selected
-## 1         1 -8.424902        8 32.84980 51.06313     TRUE
-## 2        NA -8.273236       10 36.54647 59.31313    FALSE</code></pre>
-<p>The IC table shows how many factors were tried and why a particular
-model was selected. The selected model is identifiable even for the
-variable pairs that were never jointly observed.</p>
-</div>
-<div id="combined-covariance-estimate" class="section level3">
-<h3>Combined Covariance Estimate</h3>
-<pre class="r"><code>round(fit$Sigma_hat, 4)</code></pre>
-<pre><code>##        P.L    P.W    S.L    S.W
-## P.L 0.3219 0.1482 0.3239 0.1099
-## P.W 0.1482 0.0682 0.1491 0.0506
-## S.L 0.3239 0.1491 0.4003 0.1105
-## S.W 0.1099 0.0506 0.1105 0.1116</code></pre>
-</div>
-<div id="compare-with-full-data" class="section level3">
-<h3>Compare with Full Data</h3>
-<pre class="r"><code>Sigma_full &lt;- cov(iris_virginica[, 1:4])
-
-round(Sigma_full, 4)</code></pre>
-<pre><code>##        S.L    S.W    P.L    P.W
-## S.L 0.4043 0.0938 0.3033 0.0491
-## S.W 0.0938 0.1040 0.0714 0.0476
-## P.L 0.3033 0.0714 0.3046 0.0488
-## P.W 0.0491 0.0476 0.0488 0.0754</code></pre>
-<pre class="r"><code>round(fit$Sigma_hat - Sigma_full, 4)</code></pre>
-<pre><code>##         P.L     P.W    S.L    S.W
-## P.L -0.0825  0.0544 0.0206 0.0608
-## P.W  0.0544 -0.0358 0.0778 0.0030
-## S.L  0.0206  0.0778 0.0957 0.0617
-## S.W  0.0608  0.0030 0.0617 0.0361</code></pre>
-</div>
-<div id="factor-loadings-when-a-factor-model-is-selected" class="section level3">
-<h3>Factor Loadings (when a factor model is selected)</h3>
-<pre class="r"><code>if (!is.null(fit$Lambda_hat)) {
-  round(fit$Lambda_hat, 3)
-  round(fit$Psi_hat, 3)
-}</code></pre>
-<pre><code>## [1] 0.000 0.000 0.074 0.074</code></pre>
-<p>The varimax-rotated loadings show how each variable loads onto the
-latent factors, and <code>Psi_hat</code> gives the residual (unique)
-variances.</p>
-<hr />
-</div>
-</div>
-<div id="more-realistic-scenario-different-sample-sizes" class="section level2">
-<h2>More Realistic Scenario: Different Sample Sizes</h2>
-<pre class="r"><code>set.seed(2025)
-
-CovList2 &lt;- list(
-  Small  = cov(iris_virginica[sample(1:50, 10), c(1, 2)]),
-  Medium = cov(iris_virginica[sample(1:50, 25), c(2, 3)]),
-  Large  = cov(iris_virginica[sample(1:50, 45), c(3, 4)])
-)
-nu2 &lt;- c(Small = 9, Medium = 24, Large = 44)
-
-fit2 &lt;- fit_covcomb(CovList2, nu = nu2, se_method = &quot;none&quot;)
-fit2</code></pre>
-<pre><code>## Wishart EM Covariance Combination
-## Call: fit_fa_em(S_list = S_list, nu = nu, k = kk, scale_method = scale_method, 
-##     alpha_normalization = alpha_normalization, init_sigma = init_sigma, 
-##     control = control)
-## 
-## Status: converged in 179 iterations
-## Final relative change: 9.89e-08
-## 
-## Combined covariance matrix (Sigma_hat): 4 x 4
-##   Mean diagonal: 0.2187
-##   Condition number: 1.44e+06</code></pre>
-<pre class="r"><code>round(fit2$Sigma_hat, 4)</code></pre>
-<pre><code>##         P.L     P.W     S.L     S.W
-## P.L  0.3019  0.0404 -0.3549  0.0676
-## P.W  0.0404  0.0594 -0.0475  0.0091
-## S.L -0.3549 -0.0475  0.4172 -0.0795
-## S.W  0.0676  0.0091 -0.0795  0.0964</code></pre>
-<p>The algorithm automatically weights studies by their degrees of
-freedom.</p>
-<hr />
-</div>
-<div id="bootstrap-standard-errors" class="section level2">
-<h2>Bootstrap Standard Errors</h2>
-<p>For formal inference — particularly for entries never jointly
-observed — bootstrap standard errors are recommended.</p>
-<pre class="r"><code>set.seed(1234)
-
-CovList_boot &lt;- list(
-  Study1 = cov(iris_virginica[sample(1:50, 25), c(1, 2, 3)]),
-  Study2 = cov(iris_virginica[sample(1:50, 30), c(2, 3, 4)]),
-  Study3 = cov(iris_virginica[sample(1:50, 20), c(1, 3, 4)])
-)
-nu_boot &lt;- c(Study1 = 24, Study2 = 29, Study3 = 19)
-
-fit_boot &lt;- fit_covcomb(
-  CovList_boot,
-  nu = nu_boot,
-  n_factors = NULL,  # free model: bootstrap SE is implemented for the free-Sigma path
-  se_method = &quot;bootstrap&quot;,
-  control = list(bootstrap = list(B = 100, seed = 1234, progress = FALSE, verbose = FALSE))
-)
-
-round(fit_boot$Sigma_se, 4)</code></pre>
-<pre><code>##        P.L    P.W    S.L    S.W
-## P.L 0.0519 0.0198 0.0580 0.0238
-## P.W 0.0198 0.0127 0.0236 0.0210
-## S.L 0.0580 0.0236 0.0712 0.0296
-## S.W 0.0238 0.0210 0.0296 0.0190</code></pre>
-<pre class="r"><code>fit_boot$bootstrap[c(&quot;B&quot;, &quot;successes&quot;, &quot;failures&quot;)]</code></pre>
-<pre><code>## $B
-## [1] 100
-## 
-## $successes
-## [1] 81
-## 
-## $failures
-## [1] 19</code></pre>
-<p>Bootstrap standard errors account for both sampling variance and EM
-imputation uncertainty.</p>
-<hr />
-</div>
-<div id="summary" class="section level2">
-<h2>Summary</h2>
-<p>The <code>CovCombR</code> workflow:</p>
+<div id="overview" class="section level2">
+<h2>Overview</h2>
+<p>Successful use of CovCombR requires understanding <em>which
+covariances are identifiable</em> from your study design, and which
+model is appropriate to estimate them. This vignette covers:</p>
 <ol style="list-style-type: decimal">
-<li>Provide sample covariance matrices from each study (as from
-<code>cov(X)</code>)</li>
-<li>Specify degrees of freedom (sample size − 1) for each study</li>
-<li>Call <code>fit_covcomb()</code> — the default
-<code>n_factors = &quot;auto&quot;</code> selects an identifiable model</li>
-<li>Use <code>fit$Sigma_hat</code> for downstream analysis;
-<code>fit$ic_table</code> to review model selection</li>
-<li>Add <code>se_method = &quot;bootstrap&quot;</code> for publication-quality
-uncertainty quantification</li>
+<li><strong>Identifiability</strong> — when is a covariance estimable at
+all?</li>
+<li><strong>Model choice</strong> — free-Σ vs. factor model</li>
+<li><strong>Design patterns</strong> — recommended overlap
+structures</li>
+<li><strong>Pre-flight checks</strong> — how to validate your design
+before fitting</li>
 </ol>
+<hr />
 </div>
-<div id="references" class="section level2">
-<h2>References</h2>
+<div id="identifiability-the-core-issue" class="section level2">
+<h2>Identifiability: The Core Issue</h2>
+<div id="the-free-σ-model-unconstrained" class="section level3">
+<h3>The Free-Σ Model (Unconstrained)</h3>
+<p>In the unconstrained free-Σ model (<code>n_factors = NULL</code>), a
+covariance σ_ij is identified from the data <em>only</em> if variables i
+and j are <strong>jointly observed in at least one study</strong>. If no
+study ever sees them together, σ_ij is absent from the observed-data
+likelihood; the EM will return a number, but that number depends
+entirely on initialization and should not be trusted.</p>
+<p><strong>Connectivity is necessary but not sufficient.</strong> Even
+when the observation graph is connected (every variable is reachable
+from every other), some covariances can be unidentified under the free
+model if the connecting path never includes the pair jointly.</p>
+</div>
+<div id="the-factor-model-default" class="section level3">
+<h3>The Factor Model (Default)</h3>
+<p>Under a k-factor model (Σ = ΛΛᵀ + Ψ), identifiability is extended. If
+variable i is observed alongside variables {a, b, …} in one study, and
+variable j is observed alongside those same variables in another study,
+their shared factor loadings are identified through the overlap — and
+σ_ij = Λ[i,·]·Λ[j,·] becomes identified even though (i, j) are never
+jointly observed.</p>
+<p><strong>Example — the chain design:</strong></p>
+<pre><code>Study 1: {V1, V2}     → identifies λ₁, λ₂ relative to each other
+Study 2: {V2, V3}     → identifies λ₂, λ₃ relative to each other
+Shared anchor (V2)    → identifies σ₁₃ = λ₁λ₃ via λ₂</code></pre>
+<p>Under a 1-factor model, σ₁₃ = σ₁₂ · σ₂₃ / σ₂₂ is identified from the
+two studies even though V1 and V3 are never observed together.</p>
+</div>
+<div id="default-behavior" class="section level3">
+<h3>Default Behavior</h3>
+<p><code>fit_covcomb()</code> defaults to
+<code>n_factors = &quot;auto&quot;</code>, which fits factor models of increasing
+complexity and selects the best by BIC. This means:</p>
 <ul>
-<li>Anderson, T. W. (2003). <em>An Introduction to Multivariate
-Statistical Analysis</em> (3rd ed.). Wiley.</li>
-<li>Rubin, D. B., &amp; Thayer, D. T. (1982). EM algorithms for ML
-factor analysis. <em>Psychometrika</em>, 47(1), 69–76.</li>
-<li>McLachlan, G. J., &amp; Krishnan, T. (2008). <em>The EM Algorithm
-and Extensions</em> (2nd ed.). Wiley.</li>
+<li>If your data support the free model (full pairwise coverage), it
+will typically be selected.</li>
+<li>If your data have gaps (chain patterns, sparse designs), a factor
+model will be selected, giving valid estimates where the free model
+would not.</li>
 </ul>
+<hr />
 </div>
-<div id="session-information" class="section level2">
-<h2>Session Information</h2>
-<pre class="r"><code>sessionInfo()</code></pre>
-<pre><code>## R version 4.4.1 (2024-06-14)
-## Platform: aarch64-apple-darwin20
-## Running under: macOS 26.5.1
-## 
-## Matrix products: default
-## BLAS:   /Library/Frameworks/R.framework/Versions/4.4-arm64/Resources/lib/libRblas.0.dylib 
-## LAPACK: /Library/Frameworks/R.framework/Versions/4.4-arm64/Resources/lib/libRlapack.dylib;  LAPACK version 3.12.0
-## 
-## locale:
-## [1] C.UTF-8/C.UTF-8/C.UTF-8/C/C.UTF-8/C.UTF-8
-## 
-## time zone: America/New_York
-## tzcode source: internal
-## 
-## attached base packages:
-## [1] stats     graphics  grDevices utils     datasets  methods   base     
-## 
-## other attached packages:
-## [1] CovCombR_1.5.0 testthat_3.2.3
-## 
-## loaded via a namespace (and not attached):
-##  [1] jsonlite_2.0.0    miniUI_0.1.1.1    compiler_4.4.1    brio_1.1.5       
-##  [5] promises_1.3.2    Rcpp_1.1.1        jquerylib_0.1.4   later_1.4.1      
-##  [9] yaml_2.3.10       fastmap_1.2.0     mime_0.13         R6_2.6.1         
-## [13] knitr_1.50        htmlwidgets_1.6.4 desc_1.4.3        profvis_0.4.0    
-## [17] rprojroot_2.0.4   shiny_1.11.1      bslib_0.9.0       rlang_1.1.6      
-## [21] cachem_1.1.0      xfun_0.54         httpuv_1.6.15     sass_0.4.10      
-## [25] fs_1.6.6          pkgload_1.4.0     memoise_2.0.1     cli_3.6.5        
-## [29] withr_3.0.2       magrittr_2.0.4    digest_0.6.37     rstudioapi_0.17.1
-## [33] xtable_1.8-4      remotes_2.5.0     devtools_2.4.5    lifecycle_1.0.4  
-## [37] vctrs_0.6.5       evaluate_1.0.5    glue_1.8.0        urlchecker_1.0.1 
-## [41] sessioninfo_1.2.3 pkgbuild_1.4.6    rmarkdown_2.30    purrr_1.1.0      
-## [45] tools_4.4.1       usethis_3.1.0     ellipsis_0.3.2    htmltools_0.5.8.1</code></pre>
+</div>
+<div id="minimum-requirements" class="section level2">
+<h2>Minimum Requirements</h2>
+<div id="hard-constraints" class="section level3">
+<h3>Hard Constraints</h3>
+<table>
+<colgroup>
+<col width="48%" />
+<col width="33%" />
+<col width="18%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>Requirement</th>
+<th>Minimum</th>
+<th>Why</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Studies (K)</strong></td>
+<td>≥ 2</td>
+<td>Cannot combine a single study</td>
+</tr>
+<tr class="even">
+<td><strong>Variables (p)</strong></td>
+<td>≥ 3</td>
+<td>Covariance needs at least 3 variables</td>
+</tr>
+<tr class="odd">
+<td><strong>Sample size (ν_k)</strong></td>
+<td>≥ p_k</td>
+<td>Wishart requires ν ≥ dimension</td>
+</tr>
+<tr class="even">
+<td><strong>Graph connectivity</strong></td>
+<td>All connected</td>
+<td>Each variable reachable from every other</td>
+</tr>
+</tbody>
+</table>
+<p>Graph connectivity is required for both the free model and the factor
+model. Variables in disconnected components cannot share factor
+structure and remain unidentifiable.</p>
+</div>
+<div id="practical-guidelines" class="section level3">
+<h3>Practical Guidelines</h3>
+<table>
+<thead>
+<tr class="header">
+<th>Guideline</th>
+<th>Recommended</th>
+<th>Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><strong>Studies (K)</strong></td>
+<td>≥ 3</td>
+<td>Better factor identification, stability</td>
+</tr>
+<tr class="even">
+<td><strong>Overlap per study</strong></td>
+<td>&gt; 40%</td>
+<td>Reduces imputation uncertainty</td>
+</tr>
+<tr class="odd">
+<td><strong>Sample size (ν_k)</strong></td>
+<td>≥ 10 × p_k</td>
+<td>Adequate precision per study</td>
+</tr>
+</tbody>
+</table>
+<hr />
+</div>
+</div>
+<div id="design-patterns" class="section level2">
+<h2>Design Patterns</h2>
+<div id="pattern-1-complete-overlap-ideal" class="section level3">
+<h3>Pattern 1: Complete Overlap (Ideal)</h3>
+<p>All studies observe all variables. No imputation needed; the free
+model is always valid.</p>
+<pre><code>Study 1: {V1, V2, V3, V4, V5}
+Study 2: {V1, V2, V3, V4, V5}
+Study 3: {V1, V2, V3, V4, V5}</code></pre>
+<p>Use when: simulation studies, method validation, or when data
+collection is fully controlled.</p>
+</div>
+<div id="pattern-2-balanced-overlap-recommended" class="section level3">
+<h3>Pattern 2: Balanced Overlap (Recommended)</h3>
+<p>Each study observes ~60–80% of variables with systematic rotation;
+all pairs observed in at least one study.</p>
+<pre><code>Study 1: {V1, V2, V3, V4, V5, V6, V7, V8}
+Study 2: {V3, V4, V5, V6, V7, V8, V9, V10}
+Study 3: {V1, V2, V5, V6, V7, V8, V9, V10}</code></pre>
+<p>With full pairwise coverage, the free model is valid and
+auto-selection will likely favor it. Use for multi-site studies or
+meta-analysis.</p>
+</div>
+<div id="pattern-3-hierarchical-blocks" class="section level3">
+<h3>Pattern 3: Hierarchical Blocks</h3>
+<p>Studies organized in blocks with a bridge study connecting them.</p>
+<pre><code>Study 1 (Block A): {V1, V2, V3, V4}
+Study 2 (Block B): {V5, V6, V7, V8}
+Study 3 (Bridge):  {V2, V3, V6, V7}   ← connects both blocks</code></pre>
+<p>The bridge study ensures connectivity. Cross-block pairs (e.g.,
+V1–V5) are not directly observed, so the factor model will typically be
+selected and will estimate them via shared factor structure.</p>
+</div>
+<div id="pattern-4-star-topology" class="section level3">
+<h3>Pattern 4: Star Topology</h3>
+<p>One large hub study, several focused spoke studies.</p>
+<pre><code>Hub:     {V1, V2, V3, V4, V5, V6, V7, V8}
+Spoke 1: {V1, V2, V3}
+Spoke 2: {V4, V5, V6}
+Spoke 3: {V7, V8}</code></pre>
+<p>The hub provides all pairwise coverage; spokes increase precision for
+specific subsets. Hub quality is critical.</p>
+</div>
+<div id="pattern-5-chain-topology-now-supported-via-factor-model" class="section level3">
+<h3>Pattern 5: Chain Topology — Now Supported via Factor Model</h3>
+<p>Previously treated as problematic, chain designs are now supported
+when using the factor model.</p>
+<pre><code>Study 1: {V1, V2, V3}
+Study 2: {V2, V3, V4}
+Study 3: {V4, V5, V6}</code></pre>
+<p>Under the free model, pairs like V1–V6 are unidentified. Under a
+factor model, the shared variables (V2, V3, V4) serve as anchors that
+propagate factor loadings across the chain. The default
+<code>n_factors = &quot;auto&quot;</code> will select a factor model automatically
+when needed.</p>
+<pre class="r"><code>set.seed(2025)
+var_names &lt;- c(&quot;V1&quot;, &quot;V2&quot;, &quot;V3&quot;)
+
+# True 1-factor covariance: lambda = c(0.8, 0.9, 0.7)
+lam &lt;- c(0.8, 0.9, 0.7)
+true_Sigma &lt;- outer(lam, lam) + diag(c(0.36, 0.19, 0.51))
+dimnames(true_Sigma) &lt;- list(var_names, var_names)
+
+# Chain pattern: V1-V2 in Study 1, V2-V3 in Study 2
+S1 &lt;- rWishart(1, 200, true_Sigma[1:2, 1:2])[,,1] / 200
+S2 &lt;- rWishart(1, 200, true_Sigma[2:3, 2:3])[,,1] / 200
+dimnames(S1) &lt;- list(var_names[1:2], var_names[1:2])
+dimnames(S2) &lt;- list(var_names[2:3], var_names[2:3])
+
+S_list_chain &lt;- list(S1 = S1, S2 = S2)
+nu_chain     &lt;- c(S1 = 200, S2 = 200)
+
+# Free model: V1-V3 is NOT identified
+fit_free &lt;- fit_covcomb(S_list_chain, nu_chain, n_factors = NULL, se_method = &quot;none&quot;)
+
+# Factor model (k=1): V1-V3 IS identified
+fit_fa &lt;- fit_covcomb(S_list_chain, nu_chain, n_factors = 1, se_method = &quot;none&quot;)
+
+# Auto-selection picks the factor model
+fit_auto &lt;- fit_covcomb(S_list_chain, nu_chain, se_method = &quot;none&quot;)
+
+data.frame(
+  Model       = c(&quot;Free Sigma&quot;, &quot;1-factor&quot;, &quot;Auto&quot;),
+  sigma_V1_V3 = round(c(
+    fit_free$Sigma_hat[&quot;V1&quot;, &quot;V3&quot;],
+    fit_fa$Sigma_hat[&quot;V1&quot;, &quot;V3&quot;],
+    fit_auto$Sigma_hat[&quot;V1&quot;, &quot;V3&quot;]
+  ), 4),
+  True_sigma_V1_V3 = round(true_Sigma[&quot;V1&quot;, &quot;V3&quot;], 4)
+)
+#&gt;        Model sigma_V1_V3 True_sigma_V1_V3
+#&gt; 1 Free Sigma     -0.0168             0.56
+#&gt; 2   1-factor      0.5123             0.56
+#&gt; 3       Auto     -0.0168             0.56</code></pre>
+<p>The free model returns an arbitrary value for V1–V3 (depends on
+initialization). The factor model recovers an estimate close to the true
+value; auto-selection finds the same solution.</p>
+<hr />
+</div>
+</div>
+<div id="identifiability-diagnostics" class="section level2">
+<h2>Identifiability Diagnostics</h2>
+<div id="connectivity-check" class="section level3">
+<h3>Connectivity Check</h3>
+<p>CovCombR checks graph connectivity automatically and warns if
+disconnected. You can also check manually:</p>
+<pre class="r"><code>check_connectivity &lt;- function(S_list) {
+  all_vars &lt;- sort(unique(unlist(lapply(S_list, rownames))))
+  p        &lt;- length(all_vars)
+  var_map  &lt;- setNames(seq_len(p), all_vars)
+  adj      &lt;- matrix(0L, p, p)
+
+  for (S in S_list) {
+    idx &lt;- var_map[rownames(S)]
+    adj[idx, idx] &lt;- 1L
+  }
+  diag(adj) &lt;- 0L
+
+  visited &lt;- logical(p)
+  n_comp  &lt;- 0L
+  for (start in seq_len(p)) {
+    if (visited[start]) next
+    n_comp &lt;- n_comp + 1L
+    queue  &lt;- start
+    visited[start] &lt;- TRUE
+    while (length(queue) &gt; 0) {
+      cur      &lt;- queue[1]; queue &lt;- queue[-1]
+      nbrs     &lt;- which(adj[cur, ] == 1L &amp; !visited)
+      visited[nbrs] &lt;- TRUE
+      queue    &lt;- c(queue, nbrs)
+    }
+  }
+  list(is_connected = n_comp == 1L, num_components = n_comp, variables = all_vars)
+}
+
+# Example: balanced overlap design
+S1 &lt;- matrix(1, 5, 5); rownames(S1) &lt;- colnames(S1) &lt;- paste0(&quot;V&quot;, 1:5)
+S2 &lt;- matrix(1, 5, 5); rownames(S2) &lt;- colnames(S2) &lt;- paste0(&quot;V&quot;, 3:7)
+S3 &lt;- matrix(1, 4, 4); rownames(S3) &lt;- colnames(S3) &lt;- paste0(&quot;V&quot;, c(1, 2, 6, 7))
+
+check_connectivity(list(S1, S2, S3))
+#&gt; $is_connected
+#&gt; [1] TRUE
+#&gt; 
+#&gt; $num_components
+#&gt; [1] 1
+#&gt; 
+#&gt; $variables
+#&gt; [1] &quot;V1&quot; &quot;V2&quot; &quot;V3&quot; &quot;V4&quot; &quot;V5&quot; &quot;V6&quot; &quot;V7&quot;</code></pre>
+</div>
+<div id="pairwise-coverage-matrix" class="section level3">
+<h3>Pairwise Coverage Matrix</h3>
+<pre class="r"><code>compute_coverage &lt;- function(S_list, nu) {
+  all_vars &lt;- sort(unique(unlist(lapply(S_list, rownames))))
+  p        &lt;- length(all_vars)
+  var_map  &lt;- setNames(seq_len(p), all_vars)
+  coverage &lt;- matrix(0, p, p, dimnames = list(all_vars, all_vars))
+
+  for (nm in names(S_list)) {
+    idx  &lt;- var_map[rownames(S_list[[nm]])]
+    coverage[idx, idx] &lt;- coverage[idx, idx] + nu[nm]
+  }
+  diag(coverage) &lt;- NA
+  coverage
+}
+
+nu_ex   &lt;- c(S1 = 100, S2 = 120, S3 = 90)
+cov_mat &lt;- compute_coverage(list(S1 = S1, S2 = S2, S3 = S3), nu_ex)
+
+cov_mat
+#&gt;     V1  V2  V3  V4  V5  V6  V7
+#&gt; V1  NA 190 100 100 100  90  90
+#&gt; V2 190  NA 100 100 100  90  90
+#&gt; V3 100 100  NA 220 220 120 120
+#&gt; V4 100 100 220  NA 220 120 120
+#&gt; V5 100 100 220 220  NA 120 120
+#&gt; V6  90  90 120 120 120  NA 210
+#&gt; V7  90  90 120 120 120 210  NA
+
+n_pairs    &lt;- sum(!is.na(cov_mat)) / 2
+n_observed &lt;- sum(cov_mat &gt; 0, na.rm = TRUE) / 2
+sprintf(&quot;Directly observed pairs: %.1f%%&quot;, 100 * n_observed / n_pairs)
+#&gt; [1] &quot;Directly observed pairs: 100.0%&quot;</code></pre>
+<p>Pairs with zero coverage are not directly identified under the free
+model. The factor model can still estimate them if the graph is
+connected and the factor structure provides a path.</p>
+<hr />
+</div>
+</div>
+<div id="pre-flight-checklist" class="section level2">
+<h2>Pre-Flight Checklist</h2>
+<p>Before calling <code>fit_covcomb()</code>:</p>
+<pre class="r"><code># 1. Check connectivity
+conn &lt;- check_connectivity(S_list)
+stopifnot(conn$is_connected)
+
+# 2. Check coverage
+cov_mat &lt;- compute_coverage(S_list, nu)
+pct &lt;- 100 * sum(cov_mat &gt; 0, na.rm = TRUE) / sum(!is.na(cov_mat))
+sprintf(&quot;Coverage: %.1f%%&quot;, pct)
+
+# 3. Fit with auto-selection and inspect IC table
+fit &lt;- fit_covcomb(S_list, nu, se_method = &quot;none&quot;)
+fit$ic_table
+
+# 4. Check condition number of result
+kappa(fit$Sigma_hat)
+# &gt; 1e6 → ill-conditioned; may need more overlap or larger nu</code></pre>
+<hr />
+</div>
+<div id="power-considerations" class="section level2">
+<h2>Power Considerations</h2>
+<p><strong>What affects estimation quality?</strong></p>
+<ol style="list-style-type: decimal">
+<li><p><strong>Sample size (ν):</strong> SE ∝ 1/√(Σν_k) for directly
+observed pairs; factor model SEs scale similarly.</p></li>
+<li><p><strong>Number of studies (K):</strong> More studies increase
+both coverage and factor loading precision. Benefits diminish after K ≈
+5.</p></li>
+<li><p><strong>Overlap percentage:</strong> More overlap → less
+imputation → smaller SEs for all methods.</p></li>
+<li><p><strong>Factor dimensionality:</strong> If the true model has k*
+factors, fitting k &lt; k* causes bias; fitting k &gt; k* adds
+unnecessary parameters and inflates variance. Auto-selection by BIC
+guards against both errors.</p></li>
+</ol>
+<p><strong>Rule of thumb:</strong> Aim for each variable to appear in at
+least 3 studies, with ≥ 40% overlap per study pair.</p>
+<hr />
+</div>
+<div id="recommendations-summary" class="section level2">
+<h2>Recommendations Summary</h2>
+<p><strong>Use <code>n_factors = &quot;auto&quot;</code> (default) unless you have
+a specific reason to override.</strong></p>
+<p>When the data support the free model (all pairs observed),
+auto-selection typically finds it. When the data have gaps (chain
+patterns, block designs with bridges), auto-selection fits an
+appropriate factor model.</p>
+<p>Override the default only when:</p>
+<ul>
+<li>You have strong domain knowledge about the factor dimensionality →
+use <code>n_factors = k</code></li>
+<li>You have confirmed full pairwise coverage and want the exact free-Σ
+MLE → use <code>n_factors = NULL</code></li>
+<li>You want AIC instead of BIC for model selection → use
+<code>control = list(ic = &quot;AIC&quot;)</code></li>
+</ul>
+<hr />
+</div>
+<div id="see-also" class="section level2">
+<h2>See Also</h2>
+<ul>
+<li><code>vignette(&quot;CovCombR-vignette&quot;)</code> — Package introduction
+with worked example</li>
+<li><code>vignette(&quot;standard-errors&quot;)</code> — SE method selection</li>
+<li><code>vignette(&quot;statistical-methods&quot;)</code> — Full mathematical
+details including factor model</li>
+<li><code>?fit_covcomb</code> — Complete function reference</li>
+</ul>
 </div>
 
 

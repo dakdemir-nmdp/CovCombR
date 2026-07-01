@@ -267,19 +267,21 @@ test_that("Degrees of freedom affects variance correctly", {
   fit_low <- fit_covcomb(
     S_list = list(s1 = S_low),
     nu = c(s1 = nu_low),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "plugin"
   )
-  
+
   # High nu
   nu_high <- 300
   W_high <- rWishart(1, nu_high, Sigma)[,,1]
   S_high <- W_high / nu_high
   dimnames(S_high) <- dimnames(Sigma)
-  
+
   fit_high <- fit_covcomb(
     S_list = list(s1 = S_high),
     nu = c(s1 = nu_high),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "plugin"
   )

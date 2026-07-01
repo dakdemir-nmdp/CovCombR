@@ -16,16 +16,26 @@ A list with components:
   \item{log_likelihood_diff}{Log-likelihood difference (fit1 - fit2)}
   \item{favored_model}{Which model is favored ("Model 1" or "Model 2")}
   \item{strength}{Strength of evidence ("Very strong", "Strong", "Moderate", "Weak")}
-  \item{chi_square_stat}{Chi-square test statistic (-2 * diff) for nested models}
+  \item{chi_square_stat}{LRT statistic 2*(ll_larger - ll_smaller); always non-negative}
+  \item{df}{Degrees of freedom: difference in number of free parameters between
+    the two models (NA if models have the same dimension or if scale_method is
+    not stored in both fits)}
+  \item{p_value}{p-value from chi-square test (NA if df is NA or models are
+    not nested)}
 }
 \description{
 Compare two fitted covcomb models
 }
 \details{
-This function compares two models in log-space to avoid numerical underflow.
-The chi-square statistic is valid for nested models and can be tested against
-a chi-square distribution with degrees of freedom equal to the difference in
-number of parameters.
+This function compares two models via the log-likelihood ratio test (LRT).
+The LRT statistic \eqn{2(\ell_{\text{larger}} - \ell_{\text{smaller}})} is
+always non-negative and follows an asymptotic chi-square distribution with
+degrees of freedom equal to the difference in number of free parameters,
+provided the models are nested.
+
+\strong{Degrees of freedom:} Free parameters are \eqn{p(p+1)/2} for
+\eqn{\boldsymbol{\Sigma}} plus \eqn{K-1} for alpha when
+\code{scale_method = "estimate"}.
 
 Interpretation guidelines (based on log-likelihood differences):
 \itemize{
@@ -40,6 +50,7 @@ Interpretation guidelines (based on log-likelihood differences):
 fit1 <- fit_covcomb(S_list, nu_vec, scale_method = "none")
 fit2 <- fit_covcomb(S_list, nu_vec, scale_method = "estimate")
 comparison <- compare_models(fit1, fit2)
+# chi_square_stat is always >= 0; use p_value for hypothesis testing
 print(comparison)
 }
 }

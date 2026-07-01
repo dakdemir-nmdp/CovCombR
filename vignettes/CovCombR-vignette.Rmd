@@ -33,78 +33,74 @@ library(tidyr)
 
 # CovCombR in One Example
 
-The CovCombR package combines several incomplete covariance matrices (each covering different subsets of variables) into a single, coherent estimate. Rather than walking through every feature, this vignette focuses on one practical scenario that shows the workflow from raw inputs to interpretation.
+The CovCombR package combines several incomplete covariance matrices (each covering different subsets of variables) into a single, coherent estimate. The default model automatically selects an appropriate factor structure via BIC, which handles cases where some variable pairs are never observed together in the same study.
+
+## The Identifiability Problem
+
+Before fitting, it is important to understand when a combined estimate is *identified* — meaning the data uniquely determine the answer rather than just reflecting an arbitrary starting value.
+
+With the **unconstrained (free-Σ) model**, a covariance σ_ij is identifiable only if variables *i* and *j* are jointly observed in at least one study. If they never appear together, σ_ij is absent from the likelihood and the estimate is initialization-dependent.
+
+With a **factor model** (Σ = ΛΛᵀ + Ψ), this constraint is relaxed: even if variables *i* and *j* are never jointly observed, their loadings Λ[i,·] and Λ[j,·] can both be identified through their relationships with shared overlapping variables, so σ_ij = Λ[i,·]·Λ[j,·] becomes identified.
+
+The default `n_factors = "auto"` fits factor models of increasing complexity alongside the free model and selects the best by BIC, giving you the most parsimonious *identifiable* representation of the data.
 
 ## Scenario: Block-Structured Covariance with Overlapping Samples
 
-We simulate a covariance matrix with two correlated blocks. Four independent studies each observe a different overlapping subset of variables and report their covariance estimates. Our goal is to recover the full covariance structure those studies only see in pieces, including heterogeneous variances across variables.
+We simulate a covariance matrix with two correlated blocks. Ten independent studies each observe a different overlapping subset of variables. The study patterns deliberately include some pairs never jointly observed, which makes the free-Σ model non-identifiable for those pairs.
 
 ```{r simulate-example}
-#set.seed(1234)
+set.seed(1234)
 p <- 8
 var_names <- paste0("Var", seq_len(p))
 
-# Generate a random correlation matrix with both positive and negative entries, then ensure positive definiteness
-base_corr <- matrix(0, p, p)
-diag(base_corr) <- 1
-for (i in 1:(p-1)) {
-  for (j in (i+1):p) {
-    val <- runif(1, -0.4, 0.7)
-    base_corr[i, j] <- base_corr[j, i] <- val
-  }
-}
-# Make sure the matrix is positive definite
-eig <- eigen(base_corr)
-min_eig <- min(eig$values)
-if (min_eig < 0) {
-  base_corr <- base_corr + diag(abs(min_eig) + 0.05, p)
-}
-
-# Heterogeneous variances
-std_dev <- runif(p, 1.2, 2.2)
-true_cov <- diag(std_dev) %*% base_corr %*% diag(std_dev)
+# True covariance with block structure and heterogeneous variances
+block <- matrix(0.6, 4, 4); diag(block) <- 1
+true_cov <- matrix(0, p, p)
+true_cov[1:4, 1:4] <- block
+true_cov[5:8, 5:8] <- block
+true_cov[1:4, 5:8] <- 0.2; true_cov[5:8, 1:4] <- 0.2
+diag(true_cov) <- 1
+std_dev <- c(1.5, 1.2, 1.8, 1.4, 2.0, 1.6, 1.3, 1.9)
+true_cov <- diag(std_dev) %*% true_cov %*% diag(std_dev)
 dimnames(true_cov) <- list(var_names, var_names)
 
-# Create more varied and sparse sample patterns
+# Observation patterns — sparse enough that some pairs are never jointly observed
 patterns <- list(
-  sample1 = var_names[c(1,2)],
-  sample2 = var_names[c(3,4)],
-  sample3 = var_names[c(5,6)],
-  sample4 = var_names[c(7,8)],
-  sample5 = var_names[c(1,3,5)],
-  sample6 = var_names[c(2,4,6)],
-  sample7 = var_names[c(3,5,7)],
-  sample8 = var_names[c(2,6,8)],
-  sample9 = var_names[c(1,4,7)],
-  sample10 = var_names[c(2,5,8)]
+  sample1  = var_names[c(1, 2)],
+  sample2  = var_names[c(3, 4)],
+  sample3  = var_names[c(5, 6)],
+  sample4  = var_names[c(7, 8)],
+  sample5  = var_names[c(1, 3, 5)],
+  sample6  = var_names[c(2, 4, 6)],
+  sample7  = var_names[c(3, 5, 7)],
+  sample8  = var_names[c(2, 6, 8)],
+  sample9  = var_names[c(1, 4, 7)],
+  sample10 = var_names[c(2, 5, 8)]
 )
 nu <- setNames(sample(70:110, length(patterns), replace = TRUE), names(patterns))
 
 S_list <- lapply(names(patterns), function(nm) {
   vars <- patterns[[nm]]
-  # Generate sample covariance (Wishart / df)
   W_block <- rWishart(1, nu[[nm]], true_cov[vars, vars])[,,1]
-  S_block <- W_block / nu[[nm]]  # Convert Wishart to sample covariance
+  S_block <- W_block / nu[[nm]]
   dimnames(S_block) <- list(vars, vars)
   S_block
 })
 names(S_list) <- names(patterns)
 ```
 
-Each `S_block` is a sample covariance matrix (like from `cov()`) for the variables that study observed.
-
 ## Naive Stitching Leaves Large Gaps
 
-A common first attempt is to average the overlapping blocks wherever they exist and leave zeros (or NAs) elsewhere. This captures what we know locally but ignores pairs of variables never observed together.
+A common first attempt averages overlapping blocks wherever they exist and leaves NAs elsewhere.
 
 ```{r naive-stitch}
-cov_sum <- matrix(0, p, p, dimnames = list(var_names, var_names))
+cov_sum    <- matrix(0, p, p, dimnames = list(var_names, var_names))
 pair_counts <- matrix(0, p, p, dimnames = list(var_names, var_names))
 
 for (nm in names(S_list)) {
   vars <- rownames(S_list[[nm]])
-  cov_block <- S_list[[nm]] / nu[[nm]]  # convert back to per-df covariance
-  cov_sum[vars, vars] <- cov_sum[vars, vars] + cov_block
+  cov_sum[vars, vars]    <- cov_sum[vars, vars]    + S_list[[nm]]
   pair_counts[vars, vars] <- pair_counts[vars, vars] + 1
 }
 
@@ -113,42 +109,26 @@ observed_pairs <- pair_counts > 0
 naive_cov[observed_pairs] <- cov_sum[observed_pairs] / pair_counts[observed_pairs]
 ```
 
-The resulting matrix is patchy: some correlations are well estimated, others are missing entirely.
-
 ## CovCombR Recovers the Missing Structure
 
-CovCombR treats each submatrix as incomplete information about a shared covariance. Running the EM algorithm completes the missing blocks while remaining consistent with the observed ones.
+The default call uses `n_factors = "auto"`, which selects the best factor model by BIC and ensures an identifiable estimate even for variable pairs never jointly observed.
 
 ```{r fit-wishart-em}
-fit <- fit_covcomb(S_list, nu, init_sigma = "identity")
-nu_avg <- mean(nu)
-Sigma_hat <- coef(fit)[var_names, var_names, drop = FALSE]       # per-df covariance
-S_hat <- fitted(fit)[var_names, var_names, drop = FALSE]         # data-scale covariance
-gamma_hat <- fit$S_hat_scale                                     # global scale parameter (MLE)
-em_cov <- S_hat
+fit <- fit_covcomb(S_list, nu, se_method = "none")
+
+fit$n_factors
+fit$ic_table
+
+Sigma_hat <- coef(fit)[var_names, var_names]
+S_hat     <- fitted(fit)[var_names, var_names]
+em_cov    <- S_hat
 ```
 
-
-**Key outputs:**
-
-The fitted object keeps the EM parameter estimate separate from the final data-scale matrix.
-
-- `coef(fit)` returns $\hat{\Sigma}$, the estimated base covariance on the **per-degree-of-freedom scale**; this is the core EM parameter.
-- `fitted(fit)` returns $\hat{S}$, the combined covariance on the **data scale**; use this for downstream prediction or analysis.
-- `fit$S_hat_scale` contains $\hat{\gamma}$, the estimated global scale parameter.
-
-These quantities are linked by:
-
-$$
-\hat{S} = \hat{\gamma} \times \hat{\Sigma}
-$$
-
-In this example, the estimated global scale is $\hat{\gamma} =$ `r sprintf("%.4f", gamma_hat)`. Because `true_cov` lives on the data scale, we use `S_hat` (stored as `em_cov`) for the comparisons below.
+The `ic_table` shows all candidate models (rows) with their BIC values, so you can see exactly why the selected factor count was chosen. The selected model's `Sigma_hat` is an identifiable estimate of the full covariance structure.
 
 ## Visual Comparison: True vs. Naive vs. CovCombR
 
 ```{r comparison-plot, fig.height=3, fig.width=6, dpi=300, fig.alt="Heatmaps comparing true, naive, and CovCombR covariance estimates across variables."}
-# Helper to reshape matrices for plotting
 get_plot_data <- function(mat, label) {
   as.data.frame(mat) |>
     rownames_to_column("row") |>
@@ -162,14 +142,13 @@ plot_data <- bind_rows(
   get_plot_data(em_cov, "CovCombR")
 )
 
-# Factor ordering
-plot_data$row <- factor(plot_data$row, levels = rev(var_names))
-plot_data$col <- factor(plot_data$col, levels = var_names)
+plot_data$row    <- factor(plot_data$row,    levels = rev(var_names))
+plot_data$col    <- factor(plot_data$col,    levels = var_names)
 plot_data$matrix <- factor(plot_data$matrix, levels = c("True", "Naive", "CovCombR"))
 
 ggplot(plot_data, aes(x = col, y = row, fill = value)) +
   geom_tile(color = "white", linewidth = 0.2) +
-  geom_text(aes(label = ifelse(is.na(value), "", sprintf("%.2f", value))), 
+  geom_text(aes(label = ifelse(is.na(value), "", sprintf("%.2f", value))),
             size = 2.5, na.rm = TRUE) +
   scale_fill_gradient2(midpoint = 0, na.value = "#2F2F2F",
                        low = "#2166AC", high = "#B2182B", mid = "#F7F7F7",
@@ -177,44 +156,41 @@ ggplot(plot_data, aes(x = col, y = row, fill = value)) +
   facet_wrap(~matrix, nrow = 1) +
   coord_equal() +
   labs(x = NULL, y = NULL) +
-  theme_minimal(base_size = 8) + 
+  theme_minimal(base_size = 8) +
   theme(panel.grid = element_blank(),
-        strip.text = element_text(face = "bold", size = 10), 
+        strip.text = element_text(face = "bold", size = 10),
         axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "bottom")
 ```
-  
+
 CovCombR reconstructs the full block pattern, while the naive stitch lacks estimates for any variable pair never observed together (grey tiles).
 
 ## Correlation Comparison
 
 ```{r correlation-plot, fig.height=3, fig.width=6, dpi=300, fig.alt="Heatmaps comparing true, naive, and CovCombR correlation matrices across variables."}
-# Compute correlations
 true_corr <- cov2cor(true_cov)
-em_corr <- cov2cor(em_cov)
+em_corr   <- cov2cor(em_cov)
 naive_corr <- naive_cov
-# Calculate naive correlations where possible
 for (i in 1:p) {
   for (j in 1:p) {
-    if (!is.na(naive_cov[i,i]) && !is.na(naive_cov[j,j]) && !is.na(naive_cov[i,j])) {
-      naive_corr[i,j] <- naive_cov[i,j] / sqrt(naive_cov[i,i] * naive_cov[j,j])
+    if (!is.na(naive_cov[i, i]) && !is.na(naive_cov[j, j]) && !is.na(naive_cov[i, j])) {
+      naive_corr[i, j] <- naive_cov[i, j] / sqrt(naive_cov[i, i] * naive_cov[j, j])
     }
   }
 }
 
 corr_plot_data <- bind_rows(
-  get_plot_data(true_corr, "True"),
+  get_plot_data(true_corr,  "True"),
   get_plot_data(naive_corr, "Naive"),
-  get_plot_data(em_corr, "CovCombR")
+  get_plot_data(em_corr,    "CovCombR")
 )
-
-corr_plot_data$row <- factor(corr_plot_data$row, levels = rev(var_names))
-corr_plot_data$col <- factor(corr_plot_data$col, levels = var_names)
+corr_plot_data$row    <- factor(corr_plot_data$row,    levels = rev(var_names))
+corr_plot_data$col    <- factor(corr_plot_data$col,    levels = var_names)
 corr_plot_data$matrix <- factor(corr_plot_data$matrix, levels = c("True", "Naive", "CovCombR"))
 
 ggplot(corr_plot_data, aes(x = col, y = row, fill = value)) +
   geom_tile(color = "white", linewidth = 0.2) +
-  geom_text(aes(label = ifelse(is.na(value), "", sprintf("%.2f", value))), 
+  geom_text(aes(label = ifelse(is.na(value), "", sprintf("%.2f", value))),
             size = 2.5, na.rm = TRUE) +
   scale_fill_gradient2(midpoint = 0, na.value = "#2F2F2F",
                        low = "#2166AC", high = "#B2182B", mid = "#F7F7F7",
@@ -222,59 +198,60 @@ ggplot(corr_plot_data, aes(x = col, y = row, fill = value)) +
   facet_wrap(~matrix, nrow = 1) +
   coord_equal() +
   labs(x = NULL, y = NULL) +
-  theme_minimal(base_size = 8) + 
+  theme_minimal(base_size = 8) +
   theme(panel.grid = element_blank(),
-        strip.text = element_text(face = "bold", size = 10), 
+        strip.text = element_text(face = "bold", size = 10),
         axis.text.x = element_text(angle = 45, hjust = 1),
         legend.position = "bottom")
 ```
 
-The correlation matrices show the standardized relationships, highlighting how CovCombR recovers the underlying correlation structure even for unobserved pairs.
-
 ## Recovery Quality in Numbers
 
 ```{r recovery-stats}
-upper_tri <- upper.tri(true_cov, diag = TRUE)
-observed_tri <- observed_pairs & upper_tri
-unobserved_tri <- (!observed_pairs) & upper_tri
+upper_tri        <- upper.tri(true_cov, diag = TRUE)
+observed_tri     <- observed_pairs & upper_tri
+unobserved_tri   <- (!observed_pairs) & upper_tri
 
 coverage_pct <- round(100 * sum(observed_tri) / sum(upper_tri), 1)
 
 stats_tbl <- tibble(
   Estimator = c("Naive stitch", "CovCombR", "CovCombR"),
-  Pairs = c("Observed Only", "Observed Only", "Unobserved Only"),
+  Pairs     = c("Observed Only", "Observed Only", "Unobserved Only"),
   RMSE = c(
-    sqrt(mean((naive_cov[observed_tri] - true_cov[observed_tri])^2)),
-    sqrt(mean((em_cov[observed_tri] - true_cov[observed_tri])^2)),
+    sqrt(mean((naive_cov[observed_tri] - true_cov[observed_tri])^2, na.rm = TRUE)),
+    sqrt(mean((em_cov[observed_tri]   - true_cov[observed_tri])^2)),
     sqrt(mean((em_cov[unobserved_tri] - true_cov[unobserved_tri])^2))
   ),
   MAE = c(
-    mean(abs(naive_cov[observed_tri] - true_cov[observed_tri])),
-    mean(abs(em_cov[observed_tri] - true_cov[observed_tri])),
+    mean(abs(naive_cov[observed_tri] - true_cov[observed_tri]), na.rm = TRUE),
+    mean(abs(em_cov[observed_tri]   - true_cov[observed_tri])),
     mean(abs(em_cov[unobserved_tri] - true_cov[unobserved_tri]))
   )
 ) |> mutate(across(where(is.numeric), ~round(.x, 3)))
 
 knitr::kable(stats_tbl, caption = "Recovery accuracy on the covariance scale.")
-
-```{r correlation-stats}
-corr_stats_tbl <- tibble(
-  Estimator = c("Naive stitch", "CovCombR", "CovCombR"),
-  Pairs = c("Observed Only", "Observed Only", "Unobserved Only"),
-  RMSE = c(
-    sqrt(mean((naive_corr[observed_tri] - true_corr[observed_tri])^2, na.rm = TRUE)),
-    sqrt(mean((em_corr[observed_tri] - true_corr[observed_tri])^2)),
-    sqrt(mean((em_corr[unobserved_tri] - true_corr[unobserved_tri])^2))
-  ),
-  MAE = c(
-    mean(abs(naive_corr[observed_tri] - true_corr[observed_tri]), na.rm = TRUE),
-    mean(abs(em_corr[observed_tri] - true_corr[observed_tri])),
-    mean(abs(em_corr[unobserved_tri] - true_corr[unobserved_tri]))
-  )
-) |> mutate(across(where(is.numeric), ~round(.x, 3)))
-
-knitr::kable(corr_stats_tbl, caption = "Recovery accuracy on the correlation scale.")
-```
 ```
 
 Only `r coverage_pct`% of covariance pairs are observable with naive stitching. CovCombR is more accurate than the naive estimator even on those observed pairs, and it supplies low-error estimates for the remaining `r 100 - coverage_pct`% of previously unobserved pairs.
+
+## Overriding the Automatic Selection
+
+The auto selection is appropriate for most situations. When you want explicit control:
+
+```{r override-examples, eval=FALSE}
+# Fit a specific 2-factor model
+fit_2f <- fit_covcomb(S_list, nu, n_factors = 2, se_method = "none")
+
+# Fit the unconstrained free-Sigma model (requires all pairs observed)
+fit_free <- fit_covcomb(S_list, nu, n_factors = NULL, se_method = "none")
+
+# Use AIC instead of BIC for auto selection
+fit_aic <- fit_covcomb(S_list, nu,
+                       n_factors = "auto",
+                       control = list(ic = "AIC"),
+                       se_method = "none")
+```
+
+**When to use the free model (`n_factors = NULL`):** If your study design ensures every variable pair is jointly observed in at least one study, the free model is valid and places no factor-structure assumption on the data.
+
+**When to specify a fixed k:** If you have domain knowledge about the number of latent factors (e.g., a known number of principal components), use that directly.

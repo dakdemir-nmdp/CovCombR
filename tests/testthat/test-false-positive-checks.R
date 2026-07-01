@@ -454,27 +454,29 @@ test_that("Standard errors scale correctly with sample size", {
   fit_small <- fit_covcomb(
     S_list = list(s1 = S_small),
     nu = c(s1 = nu_small),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "plugin"
   )
-  
+
   # Large sample (4x larger)
   nu_large <- 200
   W_large <- rWishart(1, nu_large, Sigma)[,,1]
   S_large <- W_large / nu_large
   dimnames(S_large) <- dimnames(Sigma)
-  
+
   fit_large <- fit_covcomb(
     S_list = list(s1 = S_large),
     nu = c(s1 = nu_large),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "plugin"
   )
-  
+
   # SE should be smaller for larger sample by factor of sqrt(4) = 2
   se_ratio <- mean(fit_small$Sigma_se) / mean(fit_large$Sigma_se)
   expected_ratio <- sqrt(nu_large / nu_small)
-  
+
   # Allow more tolerance since SE estimates can vary with Wishart sampling
   expect_equal(se_ratio, expected_ratio, tolerance = 0.2)
 })
@@ -501,17 +503,21 @@ test_that("Initialization method actually affects starting point", {
   dimnames(S2) <- list(ids[3:5], ids[3:5])
   
   # Run with max_iter=1 to see just the initialization + first M-step
+  # n_factors = NULL: factor models always derive loadings from avg_padded
+  # internally regardless of init_sigma, so this comparison needs the free model.
   fit_identity <- fit_covcomb(
     S_list = list(s1 = S1, s2 = S2),
     nu = c(s1 = nu, s2 = nu),
+    n_factors = NULL,
     init_sigma = "identity",
     control = list(max_iter = 1),
     se_method = "none"
   )
-  
+
   fit_avg <- fit_covcomb(
     S_list = list(s1 = S1, s2 = S2),
     nu = c(s1 = nu, s2 = nu),
+    n_factors = NULL,
     init_sigma = "avg_padded",
     control = list(max_iter = 1),
     se_method = "none"

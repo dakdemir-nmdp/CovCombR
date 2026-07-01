@@ -152,7 +152,7 @@ test_that("E-step conditional expectations are correct", {
   
   # Compute using our E-step
   s <- list(
-    S_k = W_OO,
+    W_k = W_OO,
     O_k = O_k,
     M_k = M_k,
     nu = nu
@@ -239,10 +239,11 @@ test_that("Convergence to MLE for complete data", {
   fit <- fit_covcomb(
     S_list = list(s1 = S1, s2 = S2),
     nu = c(s1 = nu, s2 = nu),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "none"
   )
-  
+
   max_diff <- max(abs(fit$Sigma_hat - MLE))
   expect_lt(max_diff, 1e-10)
 })
@@ -306,9 +307,10 @@ test_that("Log-likelihood increases monotonically", {
   fit <- fit_covcomb(
     S_list = S_list,
     nu = setNames(rep(nu, 3), names(S_list)),
+    n_factors = NULL,  # free model: EM monotonicity guarantee holds cleanly
     se_method = "none"
   )
-  
+
   # Check that log-likelihood generally increases (EM property)
   loglik <- fit$history$log_likelihood
   loglik_diffs <- diff(loglik)
@@ -386,7 +388,7 @@ test_that("Regression relationship for conditional Wishart", {
   W <- rWishart(1, nu, Sigma)[,,1]
   W_OO <- W[O_k, O_k]
   
-  s <- list(S_k = W_OO, O_k = O_k, M_k = M_k, nu = nu)
+  s <- list(W_k = W_OO, O_k = O_k, M_k = M_k, nu = nu)
   W_tilde <- CovCombR:::.e_step_k(Sigma, s, ridge = 1e-8)
   
   # E[W_MO | W_OO] = B * W_OO

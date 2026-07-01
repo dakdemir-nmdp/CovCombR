@@ -156,6 +156,26 @@ fitted.covcomb <- function(object, ...) {
 #'   }
 #' @param se_method Standard error method: \code{"none"}, \code{"plugin"} (default),
 #'   \code{"bootstrap"}, or \code{"sem"} (experimental).
+#' @param n_factors Number of latent factors for the covariance model. Controls
+#'   how the combined covariance is parameterized:
+#'   \itemize{
+#'     \item \code{"auto"} (default): Automatically selects the number of factors by
+#'           fitting models for \eqn{k = 1, 2, \ldots, k_{\max}} plus the unconstrained
+#'           free-\eqn{\Sigma} model, then choosing the best by BIC (or AIC if
+#'           \code{control$ic = "AIC"}). The selected model and an \code{ic_table}
+#'           are returned. \strong{Recommended for most users.}
+#'     \item Integer \eqn{k \geq 1}: Fit a k-factor model
+#'           \eqn{\Sigma = \Lambda\Lambda^\top + \Psi} with Rubin-Thayer EM.
+#'           Factor models identify covariances between variables that are never
+#'           jointly observed in any study, provided they share factors through
+#'           overlapping variables.
+#'     \item \code{NULL} or \code{"free"}: Fit the unconstrained free-\eqn{\Sigma}
+#'           model. This is the original CovCombR algorithm. It is only identifiable
+#'           when every variable pair \eqn{(i,j)} is jointly observed in at least
+#'           one study. Use with caution on chain-pattern designs.
+#'   }
+#'   The saturation point (beyond which additional factors add no new parameters
+#'   relative to free-\eqn{\Sigma}) is \eqn{k_{\max} = \lfloor(2p+1-\sqrt{8p+1})/2\rfloor}.
 #'
 #' @section Standard Error Method Selection:
 #'
@@ -264,6 +284,16 @@ fitted.covcomb <- function(object, ...) {
 #'     \item \code{log_likelihood_per_df}: Normalized log-likelihood per degree of freedom
 #'           (interpretable metric for comparing models across different sample sizes)
 #'   }}
+#' \item{model}{Character string: \code{"factor"} for a k-factor fit,
+#'   \code{"free"} for the unconstrained model (set when \code{n_factors = NULL}).}
+#' \item{n_factors}{Integer number of factors, or \code{NA} for the free model.}
+#' \item{Lambda_hat}{p x k factor loadings matrix (varimax-rotated), present when
+#'   a factor model was fitted.}
+#' \item{Psi_hat}{Length-p vector of unique variances, present when a factor model
+#'   was fitted.}
+#' \item{ic_table}{Data frame comparing all candidate models when
+#'   \code{n_factors = "auto"}, with columns \code{n_factors}, \code{loglik},
+#'   \code{n_params}, \code{AIC}, \code{BIC}, \code{selected}.}
 #' \item{call}{Matched call}
 #'
 #' @section Understanding Outputs:
@@ -362,12 +392,35 @@ fit_covcomb <- function(S_list, nu,
                         alpha_normalization = "geometric",
                         init_sigma = "identity",
                         control = list(),
-                        se_method = "plugin") {
+                        se_method = "plugin",
+                        n_factors = "auto") {
   call <- match.call()
 
   scale_method <- match.arg(scale_method, c("none", "estimate"))
   alpha_normalization <- match.arg(alpha_normalization, c("geometric", "arithmetic"))
   se_method <- match.arg(se_method, c("none", "plugin", "bootstrap", "sem"))
+
+  # Dispatch to factor model if n_factors requested
+  if (!is.null(n_factors)) {
+    if (identical(n_factors, "auto")) {
+      return(.fit_fa_auto(
+        S_list = S_list, nu = nu,
+        scale_method = scale_method,
+        alpha_normalization = alpha_normalization,
+        init_sigma = init_sigma,
+        control = control
+      ))
+    } else {
+      k <- as.integer(n_factors)
+      return(fit_fa_em(
+        S_list = S_list, nu = nu, k = k,
+        scale_method = scale_method,
+        alpha_normalization = alpha_normalization,
+        init_sigma = init_sigma,
+        control = control
+      ))
+    }
+  }
 
   # Validate inputs
   stopifnot(is.list(S_list), !is.null(names(S_list)))
@@ -526,6 +579,7 @@ fit_covcomb <- function(S_list, nu,
     S_hat = S_hat,
     S_hat_scale = S_hat_scale,
     alpha_hat = alpha_hat,
+    scale_method = scale_method,
     se_method = se_method,
     Sigma_se = NULL,
     S_hat_se = NULL,
@@ -783,11 +837,24 @@ fit_covcomb <- function(S_list, nu,
   # Reference: Anderson (2003), Theorem 7.3.4
   p_O <- length(O_k)
 
-  # Validity check: conditional Wishart requires nu_k >= p_O
+  # Hard requirement: the observed block W_OO ~ Wishart(nu_k, alpha_k*Sigma_OO)
+  # needs nu_k >= p_O to be non-degenerate.
   if (nu_k < p_O) {
     stop(sprintf(
       "Sample degrees of freedom nu_k = %g must be >= |O_k| = %d for conditional Wishart distribution to be defined. Sample has insufficient degrees of freedom.",
       nu_k, p_O
+    ), call. = FALSE)
+  }
+
+  # Softer check: the conditional Wishart for the missing block has
+  # (nu_k - p_O) degrees of freedom in dimension p_M = mk. A non-degenerate
+  # conditional distribution requires nu_k - p_O > p_M - 1, i.e. nu_k > p - 1.
+  # When this is violated the missing block is imputed from a rank-deficient
+  # distribution; results may be unreliable.
+  if (mk > 0L && (nu_k - p_O) < mk) {
+    warning(sprintf(
+      "Conditional Wishart for missing block has %g degrees of freedom in dimension %d (nu_k=%g, p_O=%d). The conditional distribution is rank-deficient; imputed missing entries may be unreliable.",
+      nu_k - p_O, mk, nu_k, p_O
     ), call. = FALSE)
   }
 
@@ -1090,10 +1157,20 @@ compute_aic <- function(fit) {
   if (!inherits(fit, "covcomb")) {
     stop("fit must be an object of class 'covcomb'", call. = FALSE)
   }
-  # Number of free parameters in symmetric covariance matrix
-  p <- nrow(fit$Sigma_hat)
-  k <- p * (p + 1) / 2
-  # Get final log-likelihood
+  # Free parameters: for factor model, p*k - k*(k-1)/2 + p;
+  # for free model, p*(p+1)/2; plus K-1 alpha parameters when
+  # scale_method = "estimate" (one degree of freedom removed by normalization)
+  p_var <- nrow(fit$Sigma_hat)
+  if (!is.null(fit$model) && fit$model == "factor") {
+    k_fa <- fit$n_factors
+    k <- p_var * k_fa - k_fa * (k_fa - 1L) / 2L + p_var
+  } else {
+    k <- p_var * (p_var + 1L) / 2L
+  }
+  if (!is.null(fit$scale_method) && fit$scale_method == "estimate") {
+    K <- length(fit$alpha_hat)
+    k <- k + max(K - 1L, 0L)
+  }
   ll <- tail(fit$history$log_likelihood, 1)
   aic <- -2 * ll + 2 * k
   return(aic)
@@ -1122,12 +1199,21 @@ compute_bic <- function(fit, nu) {
   if (!is.numeric(nu) || is.null(names(nu))) {
     stop("nu must be a named numeric vector", call. = FALSE)
   }
-  # Number of free parameters in symmetric covariance matrix
-  p <- nrow(fit$Sigma_hat)
-  k <- p * (p + 1) / 2
-  # Total degrees of freedom as effective sample size
+  # Free parameters: for factor model, p*k - k*(k-1)/2 + p;
+  # for free model, p*(p+1)/2; plus K-1 alpha parameters when
+  # scale_method = "estimate" (one degree of freedom removed by normalization)
+  p_var <- nrow(fit$Sigma_hat)
+  if (!is.null(fit$model) && fit$model == "factor") {
+    k_fa <- fit$n_factors
+    k <- p_var * k_fa - k_fa * (k_fa - 1L) / 2L + p_var
+  } else {
+    k <- p_var * (p_var + 1L) / 2L
+  }
+  if (!is.null(fit$scale_method) && fit$scale_method == "estimate") {
+    K <- length(fit$alpha_hat)
+    k <- k + max(K - 1L, 0L)
+  }
   total_nu <- sum(nu)
-  # Get final log-likelihood
   ll <- tail(fit$history$log_likelihood, 1)
   bic <- -2 * ll + log(total_nu) * k
   return(bic)
@@ -1141,12 +1227,22 @@ compute_bic <- function(fit, nu) {
 #'   \item{log_likelihood_diff}{Log-likelihood difference (fit1 - fit2)}
 #'   \item{favored_model}{Which model is favored ("Model 1" or "Model 2")}
 #'   \item{strength}{Strength of evidence ("Very strong", "Strong", "Moderate", "Weak")}
-#'   \item{chi_square_stat}{Chi-square test statistic (-2 * diff) for nested models}
+#'   \item{chi_square_stat}{LRT statistic 2*(ll_larger - ll_smaller); always non-negative}
+#'   \item{df}{Degrees of freedom: difference in number of free parameters between
+#'     the two models (NA if models have the same dimension or if scale_method is
+#'     not stored in both fits)}
+#'   \item{p_value}{p-value from chi-square test (NA if df is NA or models are
+#'     not nested)}
 #' @details
-#' This function compares two models in log-space to avoid numerical underflow.
-#' The chi-square statistic is valid for nested models and can be tested against
-#' a chi-square distribution with degrees of freedom equal to the difference in
-#' number of parameters.
+#' This function compares two models via the log-likelihood ratio test (LRT).
+#' The LRT statistic \eqn{2(\ell_{\text{larger}} - \ell_{\text{smaller}})} is
+#' always non-negative and follows an asymptotic chi-square distribution with
+#' degrees of freedom equal to the difference in number of free parameters,
+#' provided the models are nested.
+#'
+#' \strong{Degrees of freedom:} Free parameters are \eqn{p(p+1)/2} for
+#' \eqn{\boldsymbol{\Sigma}} plus \eqn{K-1} for alpha when
+#' \code{scale_method = "estimate"}.
 #'
 #' Interpretation guidelines (based on log-likelihood differences):
 #' \itemize{
@@ -1161,9 +1257,11 @@ compute_bic <- function(fit, nu) {
 #' fit1 <- fit_covcomb(S_list, nu_vec, scale_method = "none")
 #' fit2 <- fit_covcomb(S_list, nu_vec, scale_method = "estimate")
 #' comparison <- compare_models(fit1, fit2)
+#' # chi_square_stat is always >= 0; use p_value for hypothesis testing
 #' print(comparison)
 #' }
 #' @importFrom utils tail
+#' @importFrom stats pchisq
 #' @export
 compare_models <- function(fit1, fit2) {
   if (!inherits(fit1, "covcomb") || !inherits(fit2, "covcomb")) {
@@ -1184,11 +1282,128 @@ compare_models <- function(fit1, fit2) {
     "Weak"
   }
 
+  # LRT statistic: 2 * (ll_larger - ll_smaller), always >= 0
+  chi_square_stat <- 2 * abs(diff)
+
+  # Compute degrees of freedom as difference in free parameter counts
+  .n_free <- function(fit) {
+    p_var <- nrow(fit$Sigma_hat)
+    if (!is.null(fit$model) && fit$model == "factor") {
+      k_fa <- fit$n_factors
+      k <- p_var * k_fa - k_fa * (k_fa - 1L) / 2L + p_var
+    } else {
+      k <- p_var * (p_var + 1L) / 2L
+    }
+    if (!is.null(fit$scale_method) && fit$scale_method == "estimate") {
+      k <- k + max(length(fit$alpha_hat) - 1L, 0L)
+    }
+    k
+  }
+  k1 <- .n_free(fit1)
+  k2 <- .n_free(fit2)
+  df <- abs(k1 - k2)
+  if (df == 0L) df <- NA_integer_
+
+  p_value <- if (!is.na(df)) stats::pchisq(chi_square_stat, df = df, lower.tail = FALSE) else NA_real_
+
   list(
     log_likelihood_diff = diff,
     favored_model = ifelse(diff > 0, "Model 1", "Model 2"),
     strength = strength,
-    chi_square_stat = -2 * diff,
+    chi_square_stat = chi_square_stat,
+    df = df,
+    p_value = p_value,
     note = "Chi-square statistic is valid for nested models. For non-nested models, use AIC/BIC comparison."
   )
+}
+
+# -- Auto factor-selection helper (n_factors = "auto") --------------------------------
+
+.fit_fa_auto <- function(S_list, nu, scale_method, alpha_normalization,
+                         init_sigma, control) {
+  p <- length(sort(unique(unlist(lapply(S_list, rownames)))))
+
+  # Maximum identifiable k: floor((2p+1 - sqrt(8p+1)) / 2)
+  k_max <- floor((2 * p + 1 - sqrt(8 * p + 1)) / 2)
+  k_max <- max(k_max, 1L)
+
+  ic_method <- if (!is.null(control$ic)) control$ic else "BIC"
+  ic_method  <- match.arg(ic_method, c("BIC", "AIC"))
+
+  candidates <- list()
+
+  # Fit k = 1, ..., k_max
+  for (kk in seq_len(k_max)) {
+    fit_k <- tryCatch(
+      fit_fa_em(S_list, nu, k = kk,
+                scale_method = scale_method,
+                alpha_normalization = alpha_normalization,
+                init_sigma = init_sigma,
+                control = control),
+      error = function(e) NULL
+    )
+    if (!is.null(fit_k)) {
+      candidates[[length(candidates) + 1L]] <- fit_k
+    }
+  }
+
+  # Fit free model (k = NULL = unconstrained)
+  fit_free <- tryCatch(
+    fit_covcomb(S_list, nu,
+                scale_method = scale_method,
+                alpha_normalization = alpha_normalization,
+                init_sigma = init_sigma,
+                control = control,
+                se_method = "none",
+                n_factors = NULL),
+    error = function(e) NULL
+  )
+  if (!is.null(fit_free)) {
+    fit_free$model    <- "free"
+    fit_free$n_factors <- NA_integer_
+    candidates[[length(candidates) + 1L]] <- fit_free
+  }
+
+  if (length(candidates) == 0L) {
+    stop("All candidate models failed to fit.", call. = FALSE)
+  }
+
+  # Build IC table
+  ic_vals <- vapply(candidates, function(fit) {
+    if (ic_method == "BIC") compute_bic(fit, nu) else compute_aic(fit, )
+  }, numeric(1L))
+
+  n_params_vals <- vapply(candidates, function(fit) {
+    p_v <- nrow(fit$Sigma_hat)
+    if (!is.null(fit$model) && identical(fit$model, "factor")) {
+      kf <- fit$n_factors
+      p_v * kf - kf * (kf - 1L) / 2L + p_v
+    } else {
+      p_v * (p_v + 1L) / 2L
+    }
+  }, numeric(1L))
+
+  ll_vals <- vapply(candidates, function(fit) {
+    utils::tail(fit$history$log_likelihood, 1L)
+  }, numeric(1L))
+
+  nf_vals <- vapply(candidates, function(fit) {
+    if (!is.null(fit$n_factors) && !is.na(fit$n_factors)) fit$n_factors else NA_integer_
+  }, integer(1L))
+
+  best_idx <- which.min(ic_vals)
+
+  ic_table <- data.frame(
+    n_factors = nf_vals,
+    loglik    = ll_vals,
+    n_params  = n_params_vals,
+    AIC       = vapply(candidates, compute_aic, numeric(1L)),
+    BIC       = vapply(candidates, function(f) compute_bic(f, nu), numeric(1L)),
+    selected  = seq_along(candidates) == best_idx,
+    stringsAsFactors = FALSE
+  )
+
+  result          <- candidates[[best_idx]]
+  result$ic_table <- ic_table
+  result
 }

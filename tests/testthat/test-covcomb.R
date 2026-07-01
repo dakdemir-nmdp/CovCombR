@@ -16,10 +16,11 @@ test_that("fit_covcomb basic functionality works", {
   fit <- fit_covcomb(
     S_list = list(full = S_full),
     nu = c(full = 50),
+    n_factors = NULL,
     scale_method = "none",
     se_method = "plugin"
   )
-  
+
   expect_s3_class(fit, "covcomb")
   expect_true(fit$convergence$converged)
   expect_equal(dim(fit$Sigma_hat), c(p, p))
@@ -143,8 +144,8 @@ test_that("S3 methods work", {
   S <- W / 50  # Convert to sample covariance
   dimnames(S) <- list(ids, ids)
   
-  fit <- fit_covcomb(list(s1 = S), c(s1 = 50), se_method = "plugin")
-  
+  fit <- fit_covcomb(list(s1 = S), c(s1 = 50), n_factors = NULL, se_method = "plugin")
+
   expect_s3_class(fit, "covcomb")
   expect_output(print(fit), "Wishart EM Covariance Combination")
   expect_output(summary(fit), "Eigenvalue spectrum \\(Sigma_hat\\)")

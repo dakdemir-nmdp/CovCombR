@@ -21,6 +21,8 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 
 This document provides a formal proof of identifiability for a covariance matrix $\Sigma$ based on observations of its principal submatrices. It establishes that identifiability hinges on the chordality of the observation graph, not just its connectivity. It then analyzes the error, convergence, and bias of the maximum likelihood estimator (MLE), demonstrating that estimation error for unobserved entries scales with the square of the shortest path distance ($d_{ij}^2$) in the graph.
 
+**Scope note**: Every result below — chordality, path-distance error scaling, the SE-inflation theorems — applies to the **unconstrained free-$\Sigma$ model** (`n_factors = NULL`). Since CovCombR 1.6, `fit_covcomb()` defaults to `n_factors = "auto"`, which can select a **factor model** ($\Sigma = \Lambda\Lambda^\top + \Psi$) instead. The factor model extends identifiability beyond chordal coverage: an entry $\Sigma_{ij}$ can be identified through shared factor loadings even when the observation graph is non-chordal, or when $(i,j)$ lies outside any chordal completion. The code examples in this document explicitly pass `n_factors = NULL` so that the numerical results match the free-$\Sigma$ theory developed here; see `vignette("statistical-methods")` for the factor-model identifiability conditions.
+
 # Setup and Notation
 
 ## Formal Problem Statement
@@ -356,11 +358,12 @@ dimnames(S23) <- list(var_names[2:3], var_names[2:3])
 S_list <- list(study1 = S12, study2 = S23)
 nu <- c(study1 = nu12, study2 = nu23)
 
-fit <- fit_covcomb(S_list, nu, se_method = "none")
+# n_factors = NULL: this example illustrates free-Sigma identifiability theory,
+# so the free model is fit explicitly rather than relying on auto-selection.
+fit <- fit_covcomb(S_list, nu, n_factors = NULL, se_method = "none")
 Sigma_hat <- fit$Sigma_hat
 
-cat("\nEstimated covariance matrix:\n")
-print(round(Sigma_hat, 3))
+round(Sigma_hat, 3)
 
 # Parametric bootstrap for SE of Sigma[1,3]
 B <- 50  # Use fewer bootstrap samples for vignette speed
@@ -376,7 +379,7 @@ boot_vals <- replicate(B, {
 
   # Refit model
   S_list_b <- list(study1 = S12_b, study2 = S23_b)
-  fit_b <- fit_covcomb(S_list_b, nu, se_method = "none")
+  fit_b <- fit_covcomb(S_list_b, nu, n_factors = NULL, se_method = "none")
   fit_b$Sigma_hat["V1", "V3"]
 })
 
@@ -387,12 +390,12 @@ SE_boot <- sd(boot_vals)
 SE_plugin <- sqrt((Sigma_hat["V1","V1"] * Sigma_hat["V3","V3"] +
                    Sigma_hat["V1","V3"]^2) / nu_total)
 
-cat("\n--- Standard Error Comparison for Sigma[1,3] ---\n")
-cat("Bootstrap SE:    ", round(SE_boot, 4), "\n")
-cat("Naive plugin SE: ", round(SE_plugin, 4), "\n")
-cat("Ratio:           ", round(SE_boot / SE_plugin, 2), "\n")
-cat("\nThe bootstrap SE is", round(SE_boot / SE_plugin, 2),
-    "times larger than the naive plugin SE.\n")
+data.frame(
+  Method = c("Bootstrap", "Naive plugin"),
+  SE     = round(c(SE_boot, SE_plugin), 4)
+)
+
+SE_boot / SE_plugin  # ratio: bootstrap SE relative to naive plugin SE
 ```
 
 **Result interpretation**: The bootstrap SE is **larger** than the naive plugin SE, confirming that plugin SEs underestimate uncertainty for unobserved entries. The observed ratio (~1.0–2×) depends on the specific design parameters (sample sizes, correlation structure, and numerical values in $\Sigma^*$). The heuristic prediction of a factor-of-$d_{ij}$ underestimation provides the right directional guidance (bootstrap SE > plugin SE), but the exact factor varies across designs.

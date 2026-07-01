@@ -10,6 +10,7 @@ em_map_one_step(
   nu,
   scale_method,
   alpha_normalization,
+  alpha_hat = NULL,
   ridge = 1e-08
 )
 }
@@ -23,6 +24,11 @@ em_map_one_step(
 \item{scale_method}{Scaling method}
 
 \item{alpha_normalization}{Alpha normalization}
+
+\item{alpha_hat}{Named numeric vector of converged scale factors. When
+\code{scale_method = "estimate"}, these must be the converged alpha values
+so that the EM map is evaluated at the true fixed point. When \code{NULL}
+(or \code{scale_method = "none"}), all alphas default to 1.}
 
 \item{ridge}{Ridge parameter}
 }
