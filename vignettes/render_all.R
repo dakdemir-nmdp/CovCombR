@@ -1,34 +1,17 @@
-files <- c(
-    "CovCombR-vignette.Rmd",
-    "iris-example.Rmd",
-    "combining-grms.Rmd",
-    "power-analysis-3x3.Rmd",
-    "statistical-methods.Rmd",
-    "PowerAnalysis.Rmd"
-)
+files <- list.files(pattern = "\\.Rmd$")
 
 for (f in files) {
     cat(sprintf("\nRendering %s...\n", f))
 
-    # Render to HTML
+    # Render using each vignette's own declared output format(s) in its YAML
+    # header, matching what R CMD build / devtools::build_vignettes() does.
     tryCatch(
         {
-            rmarkdown::render(f, output_format = "html_document", quiet = TRUE)
-            cat(sprintf("  - HTML: Success\n"))
+            rmarkdown::render(f, quiet = TRUE)
+            cat(sprintf("  - Success\n"))
         },
         error = function(e) {
-            cat(sprintf("  - HTML: Failed (%s)\n", e$message))
-        }
-    )
-
-    # Render to PDF
-    tryCatch(
-        {
-            rmarkdown::render(f, output_format = "pdf_document", quiet = TRUE)
-            cat(sprintf("  - PDF: Success\n"))
-        },
-        error = function(e) {
-            cat(sprintf("  - PDF: Failed (%s)\n", e$message))
+            cat(sprintf("  - Failed (%s)\n", e$message))
         }
     )
 }

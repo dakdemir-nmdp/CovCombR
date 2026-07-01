@@ -10,6 +10,7 @@ output:
     number_sections: false
     fig_caption: true
     keep_tex: false
+    latex_engine: xelatex
 bibliography: references.bib
 header-includes:
   - \usepackage{amsmath}
@@ -179,7 +180,7 @@ Three methods are available (see `vignette("standard-errors")` for practical gui
 | **bootstrap** | Slow | Yes — parametric Wishart resampling | Yes |
 | **sem** | Medium | Yes — via Meng–Rubin observed information | No — free model only |
 
-For factor-model fits, plugin SEs use the Wishart variance formula with the estimated $\boldsymbol{\Sigma}$ and the per-pair coverage counts; they return `NA` for pairs with zero direct coverage. Bootstrap SEs are valid for all pairs when a factor model is used, because each bootstrap replicate refits the same k-factor model on the simulated data. `se_method = "sem"` is only supported for the free-$\boldsymbol{\Sigma}$ model ($n_{\text{factors}} = \code{NULL}$); the log-Cholesky-based observed-information derivation has not been extended to the constrained factor parameterisation, and \code{fit_covcomb()} raises an error if SEM is requested together with a factor model.
+For factor-model fits, plugin SEs use the Wishart variance formula with the estimated $\boldsymbol{\Sigma}$ and the per-pair coverage counts; they return `NA` for pairs with zero direct coverage. Bootstrap SEs are valid for all pairs when a factor model is used, because each bootstrap replicate refits the same k-factor model on the simulated data. `se_method = "sem"` is only supported for the free-$\boldsymbol{\Sigma}$ model (`n_factors = NULL`); the log-Cholesky-based observed-information derivation has not been extended to the constrained factor parameterisation, and `fit_covcomb()` raises an error if SEM is requested together with a factor model.
 
 # Parameter Counts and AIC/BIC
 
