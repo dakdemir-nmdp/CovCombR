@@ -1,0 +1,546 @@
+---
+title: "Combining Genomic Relationship Matrices with Factor-Analytic Models"
+author: "Deniz Akdemir"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_caption: true
+    keep_tex: false
+    latex_engine: xelatex
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    code_folding: show
+bibliography: references.bib
+vignette: >
+  %\VignetteIndexEntry{Combining Genomic Relationship Matrices with Factor-Analytic Models}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  fig.width = 7,
+  fig.height = 5,
+  fig.align = "center",
+  warning = FALSE,
+  message = FALSE,
+  cache = FALSE
+)
+```
+
+# Introduction
+
+## Motivation
+
+In plant and animal breeding, genomic relationship matrices (GRMs) quantify
+genetic similarity between individuals based on molecular marker data.  Modern
+breeding programmes routinely genotype cohorts on **different SNP platforms**
+(e.g., low-density vs. high-density chips, or successive generations of arrays
+with partially overlapping marker panels).  Each platform produces a GRM over a
+potentially different subset of individuals, and the resulting matrices share
+some individuals but differ in which markers contribute to the relatedness
+estimates.
+
+Combining these partial GRMs into a single, coherent relationship matrix is
+essential for:
+
+- **Multi-environment genomic prediction** across cohorts genotyped on different
+  platforms,
+- **Meta-analysis** of breeding values from independent trials, and
+- **Imputation-free workflows** where raw genotypes are unavailable but GRMs
+  from each platform are.
+
+## Why a Factor Model?
+
+When partial GRMs cover overlapping but non-identical sets of individuals, the
+combined matrix has entries (individual pairs) that are **never jointly observed**
+in any single GRM.  The unconstrained (free-$\Sigma$) Wishart EM model cannot
+identify those entries --- different starting values give different answers.
+
+A **factor model** ($\Sigma = \Lambda\Lambda^\top + \Psi$) resolves this: if
+individual $i$'s factor loading $\Lambda[i,\cdot]$ is determined by their
+co-occurrence with shared individuals in one study, and individual $j$'s loading
+is determined in another study, then
+$\sigma_{ij} = \Lambda[i,\cdot] \cdot \Lambda[j,\cdot]$
+becomes identified through shared anchors --- even if $i$ and $j$ never appear
+in the same GRM.
+
+This is biologically natural: GRMs are driven by a small number of principal
+axes of population structure, and a low-rank factor model captures this
+parsimoniously.
+
+## Data: CIMMYT Wheat Lines (BGLR Package)
+
+We use the wheat dataset from the `BGLR` package, which contains:
+
+- **599 CIMMYT wheat lines** genotyped at **1,279 DArT markers**
+- **Grain yield** measured in **4 environments**
+
+This is a classic benchmark for genomic selection methods.  We simulate a
+realistic multi-platform genotyping scenario by partitioning the markers into
+overlapping "SNP chips" and the lines into partially overlapping cohorts, so
+that **many individual pairs are never jointly observed**.
+
+# Setup and Data Preparation
+
+```{r load-packages}
+library(CovCombR)
+library(BGLR)
+library(ggplot2)
+library(reshape2)
+
+data(wheat)
+X <- wheat.X   # 599 x 1279 marker matrix
+Y <- wheat.Y   # 599 x 4 phenotype matrix
+```
+
+## Full-Data GRM (Ground Truth)
+
+We compute the GRM from the complete marker matrix as the ground truth.
+
+```{r full-grm}
+compute_grm <- function(M) {
+  Ms <- scale(M, center = TRUE, scale = TRUE)
+  Ms[is.nan(Ms)] <- 0
+  tcrossprod(Ms) / ncol(Ms)
+}
+
+G_full <- compute_grm(X)
+n_total <- nrow(G_full)
+line_ids <- paste0("L", seq_len(n_total))
+dimnames(G_full) <- list(line_ids, line_ids)
+
+cat(sprintf("Full GRM: %d x %d\n", n_total, n_total))
+cat(sprintf("Diagonal range: [%.3f, %.3f]\n",
+            min(diag(G_full)), max(diag(G_full))))
+```
+
+## Multi-Platform Design with Unobserved Pairs
+
+We select 40 wheat lines and split them across three cohorts genotyped on
+different marker platforms.  The cohorts use a **chain design** so that:
+
+- Each cohort covers about 15--20 lines,
+- Adjacent cohorts share ~5 "anchor" lines,
+- Many individual pairs appear in **no** cohort together (e.g., a line only in
+  Cohort 1 and a line only in Cohort 3 are never jointly observed).
+
+```{r define-design}
+set.seed(2026)
+
+# Select 40 lines for the demo
+demo_line_idx <- sort(sample(1:n_total, 40))
+demo_ids <- line_ids[demo_line_idx]
+
+# Chain design: C1 and C2 share anchors, C2 and C3 share anchors,
+# but C1 and C3 share only a few lines (through wrap-around).
+cohort_idx <- list(
+  Cohort1 = demo_ids[1:20],               # lines 1--20
+  Cohort2 = demo_ids[16:35],              # lines 16--35 (overlap with C1: 16--20)
+  Cohort3 = demo_ids[c(31:40, 1:5)]       # lines 31--40 + 1--5 (overlap with C2: 31--35, C1: 1--5)
+)
+
+# Different marker platforms
+platform_markers <- list(
+  ChipA = 1:800,                           # 800 markers
+  ChipB = 401:1279,                        # 879 markers
+  ChipC = c(1:500, 901:1279)               # 879 markers
+)
+
+cat("=== Cohort sizes ===\n")
+for (nm in names(cohort_idx))
+  cat(sprintf("  %s: %d lines\n", nm, length(cohort_idx[[nm]])))
+
+# Build the joint-observation matrix to identify observed/unobserved pairs
+n_demo <- length(demo_ids)
+observed_mat <- matrix(FALSE, n_demo, n_demo,
+                       dimnames = list(demo_ids, demo_ids))
+for (nm in names(cohort_idx)) {
+  ids <- cohort_idx[[nm]]
+  observed_mat[ids, ids] <- TRUE
+}
+
+n_pairs <- sum(upper.tri(observed_mat))
+n_obs   <- sum(observed_mat[upper.tri(observed_mat)])
+n_unobs <- n_pairs - n_obs
+
+cat(sprintf("\n=== Pair coverage ===\n"))
+cat(sprintf("  Total unique pairs: %d\n", n_pairs))
+cat(sprintf("  Observed (in >= 1 GRM): %d (%.1f%%)\n",
+            n_obs, 100 * n_obs / n_pairs))
+cat(sprintf("  UNOBSERVED (never jointly seen): %d (%.1f%%)\n",
+            n_unobs, 100 * n_unobs / n_pairs))
+```
+
+## Building the Partial GRMs
+
+Each cohort is genotyped on its assigned platform.
+
+```{r build-partial-grms}
+platforms_map <- list(Cohort1 = "ChipA", Cohort2 = "ChipB", Cohort3 = "ChipC")
+
+S_list <- list()
+nu_vec <- c()
+
+for (nm in names(cohort_idx)) {
+  ids <- cohort_idx[[nm]]
+  # Map demo IDs back to row indices in the full marker matrix
+  row_idx <- demo_line_idx[match(ids, demo_ids)]
+  chip <- platforms_map[[nm]]
+  marker_idx <- platform_markers[[chip]]
+
+  G <- compute_grm(X[row_idx, marker_idx, drop = FALSE])
+  dimnames(G) <- list(ids, ids)
+  S_list[[nm]] <- G
+  nu_vec[nm] <- length(marker_idx) - 1
+
+  cat(sprintf("  %s: %d x %d GRM from %s (%d markers, nu = %d)\n",
+              nm, nrow(G), ncol(G), chip, length(marker_idx), nu_vec[nm]))
+}
+```
+
+# Combining GRMs with CovCombR
+
+## Choosing the Number of Factors
+
+For GRMs, `n_factors = "auto"` can be slow because the BIC search grid grows
+with matrix size.  Since population structure in wheat is well-captured by a few
+principal axes, we directly fit factor models with $k = 2, 3, 5$ and compare.
+This is the recommended approach for large GRMs.
+
+```{r fit-models}
+fit_2f   <- fit_covcomb(S_list, nu_vec, n_factors = 2, se_method = "none")
+fit_3f   <- fit_covcomb(S_list, nu_vec, n_factors = 3, se_method = "none")
+fit_5f   <- fit_covcomb(S_list, nu_vec, n_factors = 5, se_method = "none")
+fit_free <- fit_covcomb(S_list, nu_vec, n_factors = NULL, se_method = "none")
+
+cat("=== Convergence ===\n")
+for (info in list(
+  list("2-factor", fit_2f), list("3-factor", fit_3f),
+  list("5-factor", fit_5f), list("Free",     fit_free)
+)) {
+  f <- info[[2]]
+  cat(sprintf("  %-10s %3d iterations, converged = %s\n",
+              info[[1]], f$convergence$iterations, f$convergence$converged))
+}
+```
+
+## Model Comparison via BIC
+
+```{r model-bic}
+bic_row <- function(fit, label) {
+  ll <- tail(fit$history$log_likelihood, 1)
+  p  <- nrow(fit$Sigma_hat)
+  n_nu <- sum(nu_vec)
+  if (!is.null(fit$n_factors) && !is.na(fit$n_factors)) {
+    k <- fit$n_factors
+    d <- k * p - k * (k - 1) / 2 + p
+  } else {
+    d <- p * (p + 1) / 2
+  }
+  data.frame(Model = label, k = ifelse(!is.null(fit$n_factors) && !is.na(fit$n_factors),
+                                        fit$n_factors, "free"),
+             loglik = ll, n_params = d, BIC = -2 * ll + log(n_nu) * d)
+}
+
+ic_table <- rbind(
+  bic_row(fit_2f, "2-factor"), bic_row(fit_3f, "3-factor"),
+  bic_row(fit_5f, "5-factor"), bic_row(fit_free, "Free")
+)
+
+knitr::kable(ic_table, digits = 1,
+             caption = "Model comparison by BIC (lower is better)")
+```
+
+## Factor Loadings
+
+```{r loadings}
+# Use the 3-factor model as the primary result
+fit_best <- fit_3f
+Lambda <- fit_best$Lambda_hat
+
+cat(sprintf("Factor loadings: %d lines x %d factors\n", nrow(Lambda), ncol(Lambda)))
+cat("\nFirst 10 lines:\n")
+print(round(head(Lambda, 10), 4))
+cat("\nUnique variances (Psi, first 10):\n")
+print(round(head(fit_best$Psi_hat, 10), 4))
+```
+
+# Predicting Unobserved Relationships
+
+This is the central evaluation: how well does the factor model predict
+relatedness for pairs of individuals that **never appeared together** in any
+partial GRM?
+
+## Observed vs. Unobserved Pair Classification
+
+```{r classify-pairs}
+G_truth <- G_full[demo_ids, demo_ids]
+ut <- upper.tri(G_truth)
+obs_mask   <- observed_mat[ut]
+unobs_mask <- !obs_mask
+
+cat(sprintf("Upper-triangle pairs: %d\n", sum(ut)))
+cat(sprintf("  Observed in >= 1 GRM:  %d (%.1f%%)\n",
+            sum(obs_mask), 100 * mean(obs_mask)))
+cat(sprintf("  Never jointly observed: %d (%.1f%%)\n",
+            sum(unobs_mask), 100 * mean(unobs_mask)))
+```
+
+## Recovery Metrics by Pair Type
+
+We compare each model's predictions against the ground truth GRM (computed from
+all 1,279 markers), separately for observed and unobserved pairs.
+
+```{r recovery-metrics}
+eval_fit <- function(fit, label) {
+  Sigma <- fit$Sigma_hat[demo_ids, demo_ids]
+  err_all   <- Sigma[ut] - G_truth[ut]
+  err_obs   <- err_all[obs_mask]
+  err_unobs <- err_all[unobs_mask]
+
+  data.frame(
+    Model  = label,
+    Subset = c("Observed", "Unobserved", "All"),
+    N      = c(sum(obs_mask), sum(unobs_mask), length(err_all)),
+    RMSE   = c(sqrt(mean(err_obs^2)),
+               sqrt(mean(err_unobs^2)),
+               sqrt(mean(err_all^2))),
+    Correlation = c(
+      cor(Sigma[ut][obs_mask],   G_truth[ut][obs_mask]),
+      cor(Sigma[ut][unobs_mask], G_truth[ut][unobs_mask]),
+      cor(Sigma[ut],             G_truth[ut])
+    ),
+    MAE = c(mean(abs(err_obs)), mean(abs(err_unobs)), mean(abs(err_all)))
+  )
+}
+
+metrics <- rbind(
+  eval_fit(fit_2f,   "2-factor"),
+  eval_fit(fit_3f,   "3-factor"),
+  eval_fit(fit_5f,   "5-factor"),
+  eval_fit(fit_free, "Free model")
+)
+
+knitr::kable(metrics, digits = 4, row.names = FALSE,
+             caption = "Recovery accuracy: observed vs. unobserved pairs")
+```
+
+The key result: factor models achieve **meaningful correlation** with the ground
+truth on unobserved pairs, while the free model produces **negative or near-zero
+correlation** --- confirming that those entries are not identified under the
+unconstrained model.
+
+## Scatter Plots: Observed vs. Unobserved
+
+```{r scatter-obs-unobs, fig.width=9, fig.height=5, dpi=150}
+Sigma_best <- fit_best$Sigma_hat[demo_ids, demo_ids]
+
+scatter_df <- data.frame(
+  Truth     = G_truth[ut],
+  Estimated = Sigma_best[ut],
+  Status    = ifelse(obs_mask, "Observed", "Unobserved")
+)
+
+ggplot(scatter_df, aes(x = Truth, y = Estimated, color = Status)) +
+  geom_point(alpha = 0.35, size = 1.0) +
+  geom_abline(slope = 1, intercept = 0, linewidth = 0.6, linetype = "dashed") +
+  scale_color_manual(values = c("Observed" = "#2166AC", "Unobserved" = "#D6604D")) +
+  facet_wrap(~Status) +
+  labs(
+    x = "True GRM (all markers)",
+    y = "Combined GRM (3-factor model)",
+    title = "Predicting Pairwise Relatedness: Observed vs. Unobserved Pairs",
+    subtitle = sprintf(
+      "Observed: r = %.3f, RMSE = %.4f  |  Unobserved: r = %.3f, RMSE = %.4f",
+      cor(scatter_df$Truth[scatter_df$Status == "Observed"],
+          scatter_df$Estimated[scatter_df$Status == "Observed"]),
+      sqrt(mean((scatter_df$Estimated[scatter_df$Status == "Observed"] -
+                   scatter_df$Truth[scatter_df$Status == "Observed"])^2)),
+      cor(scatter_df$Truth[scatter_df$Status == "Unobserved"],
+          scatter_df$Estimated[scatter_df$Status == "Unobserved"]),
+      sqrt(mean((scatter_df$Estimated[scatter_df$Status == "Unobserved"] -
+                   scatter_df$Truth[scatter_df$Status == "Unobserved"])^2))
+    )
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    plot.title = element_text(face = "bold"),
+    strip.text = element_text(face = "bold", size = 12)
+  )
+```
+
+## Effect of the Number of Factors on Unobserved-Pair Prediction
+
+```{r factor-comparison, fig.width=8, fig.height=4, dpi=150}
+unobs_met <- metrics[metrics$Subset == "Unobserved" &
+                       metrics$Model != "Free model", ]
+
+if (nrow(unobs_met) > 0) {
+  unobs_met$Model <- factor(unobs_met$Model,
+                            levels = c("2-factor", "3-factor", "5-factor"))
+
+  p1 <- ggplot(unobs_met, aes(x = Model, y = Correlation)) +
+    geom_col(fill = "#2166AC", alpha = 0.85, width = 0.5) +
+    geom_text(aes(label = round(Correlation, 3)), vjust = -0.5, size = 3.5) +
+    labs(title = "Correlation with Truth\n(Unobserved Pairs)", x = NULL, y = "r") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold", size = 10))
+
+  p2 <- ggplot(unobs_met, aes(x = Model, y = RMSE)) +
+    geom_col(fill = "#D6604D", alpha = 0.85, width = 0.5) +
+    geom_text(aes(label = round(RMSE, 4)), vjust = -0.5, size = 3.5) +
+    labs(title = "RMSE\n(Unobserved Pairs)", x = NULL, y = "RMSE") +
+    theme_minimal(base_size = 11) +
+    theme(plot.title = element_text(face = "bold", size = 10))
+
+  gridExtra::grid.arrange(p1, p2, ncol = 2)
+}
+```
+
+# Heatmap Comparison
+
+```{r heatmaps, fig.width=9, fig.height=4, dpi=150}
+n_show <- min(30, n_demo)
+ids_show <- demo_ids[1:n_show]
+
+mat_to_df <- function(mat, label) {
+  sub <- mat[ids_show, ids_show]
+  df <- melt(sub)
+  df$Matrix <- label
+  df
+}
+
+plot_df <- rbind(
+  mat_to_df(G_truth,    "Ground Truth"),
+  mat_to_df(Sigma_best, "CovCombR (3-factor)")
+)
+
+ggplot(plot_df, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "#2166AC", mid = "#F7F7F7", high = "#B2182B",
+    midpoint = 0, name = "GRM"
+  ) +
+  facet_wrap(~Matrix) +
+  coord_equal() +
+  labs(x = NULL, y = NULL,
+       title = "Ground Truth vs. Factor-Model Combined GRM") +
+  theme_minimal(base_size = 10) +
+  theme(
+    axis.text = element_blank(), axis.ticks = element_blank(),
+    strip.text = element_text(face = "bold", size = 11),
+    panel.grid = element_blank(), legend.position = "bottom"
+  )
+```
+
+# Eigenvalue Spectrum
+
+```{r eigenvalues, fig.width=7, fig.height=4, dpi=150}
+eig_truth <- eigen(G_truth,    symmetric = TRUE, only.values = TRUE)$values
+eig_est   <- eigen(Sigma_best, symmetric = TRUE, only.values = TRUE)$values
+
+n_eig <- min(20, length(eig_truth))
+eig_df <- data.frame(
+  Index = rep(1:n_eig, 2),
+  Eigenvalue = c(eig_truth[1:n_eig], eig_est[1:n_eig]),
+  Source = rep(c("Ground Truth", "3-Factor Model"), each = n_eig)
+)
+
+ggplot(eig_df, aes(x = Index, y = Eigenvalue, color = Source)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2.5) +
+  scale_color_manual(values = c("Ground Truth" = "#2166AC",
+                                "3-Factor Model" = "#E74C3C")) +
+  labs(x = "Eigenvalue index", y = "Eigenvalue",
+       title = "Leading Eigenvalues: Ground Truth vs. Factor Model", color = NULL) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "top", plot.title = element_text(face = "bold"))
+```
+
+# Genomic Prediction with the Combined GRM
+
+To demonstrate downstream utility, we use the combined GRM for genomic
+prediction of wheat yield (Environment 1) via ridge-regression GBLUP.
+
+```{r genomic-prediction}
+gblup <- function(y, G, prop_train = 0.7, seed = 42) {
+  set.seed(seed)
+  n <- length(y)
+  train <- sort(sample(n, floor(n * prop_train)))
+  test  <- setdiff(1:n, train)
+
+  lambda <- 0.1
+  b <- solve(G[train, train] + lambda * diag(length(train)), y[train])
+  y_pred <- G[test, train, drop = FALSE] %*% b
+  cor(y[test], y_pred)
+}
+
+y_demo <- Y[demo_line_idx, 1]
+
+acc_truth <- gblup(y_demo, G_truth)
+acc_3f    <- gblup(y_demo, Sigma_best)
+acc_free  <- gblup(y_demo, fit_free$Sigma_hat[demo_ids, demo_ids])
+
+pred_df <- data.frame(
+  GRM = c("Ground Truth (all markers)",
+          "CovCombR 3-Factor", "CovCombR Free"),
+  Accuracy = round(c(acc_truth, acc_3f, acc_free), 3)
+)
+
+knitr::kable(pred_df,
+             caption = "GBLUP prediction accuracy (Pearson r) for Environment 1")
+```
+
+# Discussion
+
+## Key Findings
+
+1. **Factor models predict unobserved relationships.** Pairs of individuals
+   that never appeared together in any partial GRM still have their relatedness
+   estimated with meaningful correlation to the ground truth.  The free model
+   fails completely on these pairs.
+
+2. **Low-rank structure is natural for GRMs.** Population structure in the wheat
+   lines is well-captured by a few factors, making the factor model both
+   statistically efficient and biologically interpretable.
+
+3. **Downstream prediction accuracy is preserved.** Genomic prediction with the
+   combined GRM approaches that of the ground-truth GRM.
+
+## Practical Recommendations
+
+1. **Choose $k$ based on domain knowledge** rather than `n_factors = "auto"`
+   for large GRMs.  The number of major population subgroups is a good starting
+   point; compare 2--3 values of $k$ by BIC.
+
+2. **Set degrees of freedom to the number of markers** ($m - 1$) for each GRM.
+
+3. **Use `scale_method = "estimate"`** when platforms differ in marker density.
+
+4. **Inspect the factor loadings** ($\Lambda$) to verify that estimated factors
+   correspond to known population structure.
+
+5. **Validate with bootstrap SEs** for entries critical to downstream decisions.
+
+# Session Information
+
+```{r session-info}
+sessionInfo()
+```
+
+# References
+
+- Perez, P. & de los Campos, G. (2014). Genome-wide regression and prediction
+  with the BGLR statistical package. *Genetics*, 198(2), 483--495.
+- Rubin, D. B. & Thayer, D. T. (1982). EM algorithms for ML factor analysis.
+  *Psychometrika*, 47(1), 69--76.
+- VanRaden, P. M. (2008). Efficient methods to compute genomic predictions.
+  *Journal of Dairy Science*, 91(11), 4414--4423.
