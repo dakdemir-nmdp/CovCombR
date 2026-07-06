@@ -124,6 +124,36 @@ test_that("compute_aic works correctly", {
   cat("\nAIC:", aic, "\n")
 })
 
+test_that("fit_covcomb(n_factors = \"auto\", control = list(ic = \"AIC\")) does not error", {
+  # Regression test: .fit_fa_auto() previously called compute_aic(fit, ) with a
+  # trailing empty argument, which raised "unused argument (alist())" whenever
+  # AIC-based auto-selection was requested.
+  set.seed(789)
+  p <- 4
+  nu <- 30
+  var_names <- paste0("V", 1:p)
+
+  Sigma <- diag(p) + 0.3
+  diag(Sigma) <- 1.5
+  dimnames(Sigma) <- list(var_names, var_names)
+
+  W1 <- rWishart(1, nu, Sigma[1:3, 1:3])[,,1]
+  W2 <- rWishart(1, nu, Sigma[2:4, 2:4])[,,1]
+  dimnames(W1) <- list(var_names[1:3], var_names[1:3])
+  dimnames(W2) <- list(var_names[2:4], var_names[2:4])
+
+  S_list <- list(s1 = W1, s2 = W2)
+  nu_vec <- c(s1 = nu, s2 = nu)
+
+  fit <- suppressWarnings(
+    fit_covcomb(S_list, nu_vec, n_factors = "auto", se_method = "none",
+                control = list(ic = "AIC"))
+  )
+
+  expect_s3_class(fit, "covcomb")
+  expect_true(all(c("AIC") %in% names(fit$ic_table)))
+})
+
 test_that("compute_bic works correctly", {
   set.seed(101112)
   p <- 4

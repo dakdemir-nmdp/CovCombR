@@ -1452,7 +1452,7 @@ compare_models <- function(fit1, fit2) {
 
   # Build IC table
   ic_vals <- vapply(candidates, function(fit) {
-    if (ic_method == "BIC") compute_bic(fit, nu) else compute_aic(fit, )
+    if (ic_method == "BIC") compute_bic(fit, nu) else compute_aic(fit)
   }, numeric(1L))
 
   n_params_vals <- vapply(candidates, function(fit) {

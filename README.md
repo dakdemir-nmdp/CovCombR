@@ -137,7 +137,7 @@ fit <- fit_covcomb(S_list, nu, n_factors = NULL)
 fit <- fit_covcomb(
   S_list,                  # List of sample covariances / GRMs
   nu,                      # Degrees of freedom (n_markers - 1 for GRMs)
-  n_factors = NULL,        # NULL = free model; integer = k-factor FA model
+  n_factors = "auto",      # "auto" (default), integer k, or NULL/"free"
   scale_method = "none",   # "none" or "estimate"
   se_method = "plugin",    # "none", "plugin", "bootstrap", "sem"
   control = list()         # Advanced options
@@ -147,9 +147,9 @@ fit <- fit_covcomb(
 ### Key Parameters
 
 **n_factors** — Model selection (NEW)
-- `NULL` (default): unconstrained (free) model
+- `"auto"` (default): fits k = 1, 2, … plus the free model and selects the best by BIC
 - Integer `k`: k-factor model Σ = ΛΛ⊤ + Ψ
-- `"auto"`: automatic BIC-based selection of k
+- `NULL` or `"free"`: unconstrained (free) model
 
 **S_list** — Named list of sample covariance matrices / GRMs
 - Row/column names identify individuals (or variables)

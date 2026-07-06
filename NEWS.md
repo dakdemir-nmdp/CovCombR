@@ -56,16 +56,17 @@ All other functionality remains unchanged.
 
 ---
 
-# Previous Versions (as WishartEM)
+# CovCombR 1.4.0
 
-## WishartEM 1.4.0
+(Released as WishartEM 1.4.0.)
 
 * Enhanced bootstrap standard error computation
 * Improved convergence diagnostics
 * Added vignettes for statistical methods
 
-## WishartEM 1.3.0
+# CovCombR 1.3.0
 
-* Initial CRAN release
+(Released as WishartEM 1.3.0; initial CRAN release.)
+
 * Core EM algorithm implementation
 * Support for heterogeneous scaling
