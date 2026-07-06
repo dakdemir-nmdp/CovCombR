@@ -1,19 +1,24 @@
 Package: CovCombR
 Type: Package
-Title: EM Algorithm for Combining Incomplete Covariance Matrices
-Version: 1.5.0
-Date: 2025-10-13
+Title: Factor-Analytic EM for Combining Incomplete Covariance and Genomic
+    Relationship Matrices
+Version: 1.6.0
+Date: 2026-07-06
 Authors@R: person("Deniz", "Akdemir",
     email = "dakdemir@nmdp.org",
     role = c("aut", "cre"))
-Description: Implements the Expectation-Maximization (EM) algorithm to combine
-    incomplete covariance (or genetic relationship) matrices into a single
-    data-scale covariance estimate. Inputs are covariance submatrices with
-    associated degrees of freedom. The latent Wishart representation supports
-    heterogeneous scaling and completeness diagnostics, while the package returns
-    the combined covariance alongside optional standard errors obtained via plugin
-    or bootstrap methods. Numerical stability is ensured through Cholesky
-    decompositions, ridge regularisation, and positive-definiteness projection.
+Description: Combines incomplete covariance matrices and genomic relationship
+    matrices (GRMs) from multiple studies into a single, complete estimate using
+    the Expectation-Maximization (EM) algorithm. The core feature is a
+    factor-analytic (FA) model (Sigma = Lambda Lambda' + Psi) that can predict
+    pairwise relatedness for individuals that were never jointly observed, by
+    leveraging shared anchor individuals across cohorts. This is particularly
+    useful for multi-platform genotyping scenarios where cohorts are genotyped on
+    different SNP chips with partial individual overlap. Also supports an
+    unconstrained (free) Wishart EM model, heterogeneous scale estimation, and
+    standard errors via plugin, bootstrap, or supplemented EM methods.
+    Numerical stability is ensured through Cholesky decompositions, ridge
+    regularisation, and positive-definiteness projection.
 License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
@@ -27,7 +32,11 @@ Suggests:
     testthat (>= 3.0.0),
     corrplot,
     fields,
-    viridis
+    viridis,
+    BGLR,
+    ggplot2,
+    reshape2,
+    gridExtra
 VignetteBuilder: knitr
 RoxygenNote: 7.3.3
 URL: https://github.com/dakdemir-nmdp/CovCombR,

@@ -1,3 +1,32 @@
+# CovCombR 1.6.0
+
+## Highlights
+
+* **Factor-analytic GRM combination is now the primary documented workflow.**
+  Documentation, README, and DESCRIPTION have been rewritten to foreground the
+  FA model (Σ = ΛΛ⊤ + Ψ) as the recommended approach for combining incomplete
+  genomic relationship matrices across multi-platform genotyping scenarios.
+
+## New Vignettes
+
+* `combining-grms-factor-model`: Comprehensive vignette demonstrating FA-model
+  GRM combination with the BGLR wheat dataset, including:
+  - Chain-overlap cohort design with unobserved pairs
+  - Model comparison by BIC (2-factor, 3-factor, 5-factor, free)
+  - Recovery metrics separated by observed vs. unobserved pairs
+  - Downstream genomic prediction (GBLUP) with the combined GRM
+
+## Documentation
+
+* README rewritten to stress FA methods for GRM combination as the key
+  differentiator — particularly the ability to predict relatedness for
+  individual pairs never jointly observed.
+* DESCRIPTION updated: title and description now emphasize factor-analytic
+  models and genomic relationship matrices.
+* Added BGLR, ggplot2, reshape2, gridExtra to Suggests for the new vignette.
+
+---
+
 # CovCombR 1.5.0
 
 ## Breaking Changes
