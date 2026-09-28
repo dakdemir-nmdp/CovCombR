@@ -1,3 +1,37 @@
+# CovCombR 1.7.0
+
+## Identifiability reporting
+
+* **New `identifiability_report()`.** Determines, from the observation design
+  alone and without fitting, which entries of the combined covariance matrix
+  the data can determine. A variable pair never jointly observed in any sample
+  carries no information about its covariance: under the free-Sigma model the
+  observed-data log-likelihood is exactly flat in that coordinate, so the value
+  the EM algorithm returns there is a deterministic function of `init_sigma`
+  rather than of the data.
+
+* **`fit_covcomb()` now warns** when a free-Sigma fit leaves entries
+  unidentified, naming the count, the proportion, and example pairs. Under a
+  factor model it emits a message instead, since the factor structure is a
+  genuine identifying assumption; the point there is that such entries rest on
+  the assumption rather than on direct observation, and should be reported that
+  way.
+
+* **Results carry an `$identifiability` component** and `summary()` reports it.
+
+* This closes a real gap. The previously documented requirement that the
+  free-Sigma model "is only identifiable when every variable pair is jointly
+  observed in at least one study" was never checked at runtime. The existing
+  graph-connectivity check is strictly weaker: a chain design observing
+  variables 1-8, 6-15 and 13-20 is fully connected, yet 95 of its 190
+  off-diagonal entries (50%) are never jointly observed. Such fits previously
+  returned initialization-determined values silently.
+
+* One boundary case is documented but not detected: if either conditional
+  variance entering the feasible interval is exactly zero, the entry is
+  identified after all, forced by positive-definiteness. That case is not
+  generic.
+
 # CovCombR 1.6.0
 
 ## Highlights

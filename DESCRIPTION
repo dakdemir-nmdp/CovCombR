@@ -2,8 +2,8 @@ Package: CovCombR
 Type: Package
 Title: Factor-Analytic EM for Combining Incomplete Covariance and Genomic
     Relationship Matrices
-Version: 1.6.0
-Date: 2026-07-06
+Version: 1.7.0
+Date: 2026-09-28
 Authors@R: person("Deniz", "Akdemir",
     email = "dakdemir@nmdp.org",
     role = c("aut", "cre"))

@@ -84,6 +84,26 @@ summary.covcomb <- function(object, ...) {
     print(summary(as.numeric(object$Sigma_se)))
   }
 
+  idf <- object$identifiability
+  if (!is.null(idf)) {
+    cat("\nIdentifiability:\n")
+    if (idf$n_unidentified_pairs == 0L) {
+      cat("  All variable pairs are jointly observed in at least one sample.\n")
+    } else {
+      cat(sprintf(
+        "  %d of %d pairs (%.1f%%) are never jointly observed.\n",
+        idf$n_unidentified_pairs, idf$n_total_pairs,
+        100 * idf$fraction_unidentified
+      ))
+      if (identical(idf$model, "free")) {
+        cat("  Under free Sigma these entries reflect init_sigma, not data.\n")
+      } else {
+        cat("  These entries rest on the factor assumption, not observation.\n")
+      }
+      cat("  See $identifiability$unidentified_pairs.\n")
+    }
+  }
+
   invisible(object)
 }
 
@@ -447,6 +467,34 @@ fit_covcomb <- function(S_list, nu,
       n_factors = se_n_factors
     )
 
+    # Entries never jointly observed are identified here through the factor
+    # structure rather than by direct observation. Say so, instead of letting
+    # the user assume the data determined them.
+    unid_fa <- .unidentified_from_coverage(
+      coverage_mat_fa, internal_data_fa$all_ids
+    )
+    fa_result$identifiability <- list(
+      n_unidentified_pairs = unid_fa$n,
+      n_total_pairs = unid_fa$total,
+      fraction_unidentified = unid_fa$fraction,
+      unidentified_pairs = unid_fa$pairs,
+      never_mask = unid_fa$mask,
+      model = "factor"
+    )
+
+    if (unid_fa$n > 0L) {
+      message(sprintf(
+        paste0(
+          "Note: %d of %d variable pairs (%.1f%%) are never jointly observed ",
+          "(e.g. %s). The factor model identifies these entries through shared ",
+          "factors, so they rest on the factor assumption rather than on ",
+          "direct observation. Call identifiability_report() for the full list."
+        ),
+        unid_fa$n, unid_fa$total, 100 * unid_fa$fraction,
+        .format_pairs(unid_fa$pairs)
+      ))
+    }
+
     return(fa_result)
   }
 
@@ -567,6 +615,39 @@ fit_covcomb <- function(S_list, nu,
 
   coverage_mat <- .compute_coverage(internal_data)
 
+  # Identifiability of individual entries. Graph connectivity, checked above,
+  # is strictly weaker: a fully connected design can still leave most pairs
+  # never jointly observed. The free-Sigma log-likelihood is exactly flat in
+  # every such entry, so its fitted value comes from init_sigma, not the data.
+  unid <- .unidentified_from_coverage(coverage_mat, internal_data$all_ids)
+  identifiability <- list(
+    n_unidentified_pairs = unid$n,
+    n_total_pairs = unid$total,
+    fraction_unidentified = unid$fraction,
+    unidentified_pairs = unid$pairs,
+    never_mask = unid$mask,
+    model = "free"
+  )
+
+  if (unid$n > 0L) {
+    warning(
+      sprintf(
+        paste0(
+          "%d of %d variable pairs (%.1f%%) are never jointly observed: %s. ",
+          "Under the free-Sigma model the observed-data log-likelihood is ",
+          "exactly flat in these entries, so their fitted values are ",
+          "determined by init_sigma rather than by the data. Do not interpret ",
+          "them, and do not read conditional independence off the ",
+          "corresponding precision entries. Fit a factor model ",
+          "(n_factors = \"auto\") to identify them, or call ",
+          "identifiability_report() for the full list."
+        ),
+        unid$n, unid$total, 100 * unid$fraction, .format_pairs(unid$pairs)
+      ),
+      call. = FALSE
+    )
+  }
+
   # Check for identifiability issues
   K <- length(S_list)
   min_eig <- min(eigen(Sigma_hat, symmetric = TRUE, only.values = TRUE)$values)
@@ -619,6 +700,7 @@ fit_covcomb <- function(S_list, nu,
       final_rel_change = rel_change
     ),
     history = history,
+    identifiability = identifiability,
     call = call
   )
 
